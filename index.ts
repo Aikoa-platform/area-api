@@ -71,6 +71,7 @@ function errorResponse(message: string, status: number = 400): Response {
 }
 
 function isLocalhost(server: Server<unknown>): boolean {
+  console.log("SERVER hostname", server.hostname);
   return server.hostname === "localhost" || server.hostname === "127.0.0.1";
 }
 
