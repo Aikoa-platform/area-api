@@ -31,6 +31,12 @@ import { initializeDatabase } from "./db/schema";
 
 const DB_PATH = process.env.DB_PATH || "./db/areas.db";
 const PORT = parseInt(process.env.PORT || "3000", 10);
+const API_KEY = process.env.API_KEY;
+
+if (!API_KEY) {
+  console.error("ERROR: API_KEY environment variable is required");
+  process.exit(1);
+}
 
 // Initialize database
 let db: Database;
@@ -48,25 +54,35 @@ if (existsSync(DB_PATH)) {
   db = initializeDatabase(DB_PATH);
 }
 
-// CORS headers
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+// No CORS headers - server-to-server only
+const baseHeaders = {
+  "Content-Type": "application/json",
 };
 
 function jsonResponse(data: unknown, status: number = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      "Content-Type": "application/json",
-      ...corsHeaders,
-    },
+    headers: baseHeaders,
   });
 }
 
 function errorResponse(message: string, status: number = 400): Response {
   return jsonResponse({ error: message }, status);
+}
+
+function validateApiKey(req: Request): boolean {
+  // Check X-API-Key header
+  const apiKeyHeader = req.headers.get("X-API-Key");
+  if (apiKeyHeader === API_KEY) return true;
+
+  // Check Authorization: Bearer <key>
+  const authHeader = req.headers.get("Authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7);
+    if (token === API_KEY) return true;
+  }
+
+  return false;
 }
 
 function parseFloat(value: string | null): number | null {
@@ -88,17 +104,17 @@ const server = Bun.serve({
     const url = new URL(req.url);
     const path = url.pathname;
 
-    // Handle CORS preflight
-    if (req.method === "OPTIONS") {
-      return new Response(null, { headers: corsHeaders });
-    }
-
-    // Health check
+    // Health check - no auth required (for Railway/monitoring)
     if (path === "/health") {
       return jsonResponse({
         status: "ok",
         timestamp: new Date().toISOString(),
       });
+    }
+
+    // Validate API key for all other endpoints
+    if (!validateApiKey(req)) {
+      return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
     // Stats

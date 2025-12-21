@@ -247,8 +247,25 @@ Run `bun run ingest -- --list` to see all supported countries. Currently include
 
 ## Environment Variables
 
+- `API_KEY` (required): API key for authentication. Generate with `openssl rand -hex 32`
 - `DB_PATH`: Path to SQLite database (default: `./db/areas.db`)
 - `PORT`: Server port (default: `3000`)
+
+See `.env.example` for a template.
+
+## Authentication
+
+All endpoints except `/health` require authentication via API key:
+
+```bash
+# Using X-API-Key header
+curl -H "X-API-Key: your-api-key" "http://localhost:3000/areas/search?q=kallio"
+
+# Using Authorization header
+curl -H "Authorization: Bearer your-api-key" "http://localhost:3000/areas/search?q=kallio"
+```
+
+This API is designed for server-to-server use only. CORS is disabled.
 
 ## Project Structure
 
