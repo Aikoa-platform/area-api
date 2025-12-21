@@ -7,6 +7,9 @@ import {
   haversineDistance,
   boundingBoxFromRadius,
   pointInPolygon,
+  calculateBearing,
+  roundBearingToSector,
+  bearingToCardinal,
 } from "../lib/geo";
 
 export interface AreaResult {
@@ -316,5 +319,193 @@ export function getStats(db: Database): {
     countriesCount,
     postalCodesCount,
     citiesCount,
+  };
+}
+
+/**
+ * Adjacent area result with direction and level information.
+ */
+export interface AdjacentAreaResult {
+  osm_id: number;
+  osm_type: string;
+  place_type: string;
+  name: string;
+  names: Record<string, string>;
+  center: {
+    lat: number;
+    lng: number;
+  };
+  postal_codes: string[];
+  country_code: string;
+  parent_city: string | null;
+  parent_municipality: string | null;
+  distance_meters: number;
+  /** Direction from center in degrees (0=N, 90=E, 180=S, 270=W), rounded to 45° */
+  degrees: number;
+  /** Cardinal direction (N, NE, E, SE, S, SW, W, NW) */
+  direction: string;
+  /** Level/ring from center (0=center, 1=adjacent, 2=next ring, etc.) */
+  level: number;
+}
+
+export interface AdjacentSearchResult {
+  center: GroupedAreaResult;
+  adjacent: AdjacentAreaResult[];
+}
+
+/**
+ * Find a center area by search term.
+ */
+function findCenterBySearch(
+  db: Database,
+  query: string
+): GroupedAreaResult | null {
+  const searchPattern = `%${query}%`;
+  const exactStartPattern = `${query}%`;
+  const rows = db
+    .query<AreaRow, [string, string, string, string]>(
+      `
+    SELECT * FROM areas
+    WHERE name LIKE ? OR names LIKE ?
+    ORDER BY 
+      CASE WHEN name = ? THEN 0 ELSE 1 END,
+      CASE WHEN name LIKE ? THEN 0 ELSE 1 END,
+      name
+    LIMIT 10
+  `
+    )
+    .all(searchPattern, searchPattern, query, exactStartPattern);
+
+  if (rows.length === 0) return null;
+
+  const results = rows.map((row) => rowToResult(row, 0));
+  const grouped = groupAreaResults(results);
+  return grouped[0] ?? null;
+}
+
+/**
+ * Find a center area by location.
+ */
+function findCenterByLocation(
+  db: Database,
+  lat: number,
+  lng: number
+): GroupedAreaResult | null {
+  const nearby = findAreasNearby(db, lat, lng, 2000, 5);
+  if (nearby.length === 0) return null;
+
+  const grouped = groupAreaResults(nearby);
+  return grouped[0] ?? null;
+}
+
+/**
+ * Find adjacent areas around a center, with direction and level information.
+ */
+export function findAdjacentAreas(
+  db: Database,
+  options: {
+    query?: string;
+    lat?: number;
+    lng?: number;
+    radius?: number;
+    limit?: number;
+  }
+): AdjacentSearchResult | null {
+  const { query, lat, lng, radius = 5000, limit = 20 } = options;
+
+  // Find the center area
+  let center: GroupedAreaResult | null = null;
+
+  if (query) {
+    center = findCenterBySearch(db, query);
+  } else if (lat !== undefined && lng !== undefined) {
+    center = findCenterByLocation(db, lat, lng);
+  }
+
+  if (!center) {
+    return null;
+  }
+
+  // Find nearby areas around the center
+  const centerLat = center.center.lat;
+  const centerLng = center.center.lng;
+  const nearby = findAreasNearby(db, centerLat, centerLng, radius, limit * 3);
+  const grouped = groupAreaResults(nearby);
+
+  // Filter out the center itself and calculate direction/level
+  const adjacentWithDirection: Array<
+    GroupedAreaResult & { degrees: number; distance: number }
+  > = [];
+
+  for (const area of grouped) {
+    // Skip the center itself
+    if (area.osm_id === center.osm_id && area.osm_type === center.osm_type) {
+      continue;
+    }
+
+    const bearing = calculateBearing(
+      { lat: centerLat, lng: centerLng },
+      { lat: area.center.lat, lng: area.center.lng }
+    );
+    const degrees = roundBearingToSector(bearing, 8);
+    const distance = area.distance_meters ?? 0;
+
+    adjacentWithDirection.push({
+      ...area,
+      degrees,
+      distance,
+    });
+  }
+
+  // Group by direction sector and assign levels
+  const sectorMap = new Map<number, typeof adjacentWithDirection>();
+  for (const area of adjacentWithDirection) {
+    const sector = area.degrees;
+    if (!sectorMap.has(sector)) {
+      sectorMap.set(sector, []);
+    }
+    sectorMap.get(sector)!.push(area);
+  }
+
+  // Sort each sector by distance and assign levels
+  const adjacentResults: AdjacentAreaResult[] = [];
+  for (const [sector, areas] of sectorMap) {
+    // Sort by distance within each sector
+    areas.sort((a, b) => a.distance - b.distance);
+
+    // Assign levels (1, 2, 3, ...)
+    for (let i = 0; i < areas.length; i++) {
+      const area = areas[i]!;
+      adjacentResults.push({
+        osm_id: area.osm_id,
+        osm_type: area.osm_type,
+        place_type: area.place_type,
+        name: area.name,
+        names: area.names,
+        center: area.center,
+        postal_codes: area.postal_codes,
+        country_code: area.country_code,
+        parent_city: area.parent_city,
+        parent_municipality: area.parent_municipality,
+        distance_meters: area.distance,
+        degrees: sector,
+        direction: bearingToCardinal(sector),
+        level: i + 1,
+      });
+    }
+  }
+
+  // Sort by level first, then by degrees for consistent ordering
+  adjacentResults.sort((a, b) => {
+    if (a.level !== b.level) return a.level - b.level;
+    return a.degrees - b.degrees;
+  });
+
+  return {
+    center: {
+      ...center,
+      distance_meters: 0,
+    },
+    adjacent: adjacentResults.slice(0, limit),
   };
 }

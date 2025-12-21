@@ -11,6 +11,7 @@
  *   GET /areas/nearby?lat=X&lng=Y&radius=Z
  *   GET /areas/containing?lat=X&lng=Y
  *   GET /areas/search?q=name
+ *   GET /areas/adjacent?q=name|lat=X&lng=Y
  *   GET /stats
  *   GET /health
  */
@@ -21,6 +22,7 @@ import {
   findAreasNearby,
   findAreasContaining,
   searchAreasByName,
+  findAdjacentAreas,
   getStats,
   getCountries,
   groupAreaResults,
@@ -199,6 +201,51 @@ const server = Bun.serve({
       });
     }
 
+    // Find adjacent areas around a center
+    if (path === "/areas/adjacent") {
+      const query = url.searchParams.get("q");
+      const lat = parseFloat(url.searchParams.get("lat"));
+      const lng = parseFloat(url.searchParams.get("lng"));
+      const radius = parseFloat(url.searchParams.get("radius")) ?? 5000;
+      const limit = parseInt(url.searchParams.get("limit"), 20);
+
+      if (!query && (lat === null || lng === null)) {
+        return errorResponse(
+          "Either q (search query) or lat/lng coordinates are required"
+        );
+      }
+
+      if (lat !== null && (lat < -90 || lat > 90)) {
+        return errorResponse("lat must be between -90 and 90");
+      }
+
+      if (lng !== null && (lng < -180 || lng > 180)) {
+        return errorResponse("lng must be between -180 and 180");
+      }
+
+      if (radius < 100 || radius > 100000) {
+        return errorResponse("radius must be between 100 and 100000 meters");
+      }
+
+      const result = findAdjacentAreas(db, {
+        query: query ?? undefined,
+        lat: lat ?? undefined,
+        lng: lng ?? undefined,
+        radius,
+        limit,
+      });
+
+      if (!result) {
+        return jsonResponse({ center: null, adjacent: [], count: 0 });
+      }
+
+      return jsonResponse({
+        center: result.center,
+        adjacent: result.adjacent,
+        count: result.adjacent.length,
+      });
+    }
+
     // Not found
     return jsonResponse(
       {
@@ -207,6 +254,7 @@ const server = Bun.serve({
           "GET /areas/nearby?lat=X&lng=Y&radius=Z",
           "GET /areas/containing?lat=X&lng=Y",
           "GET /areas/search?q=name",
+          "GET /areas/adjacent?q=name|lat=X&lng=Y",
           "GET /stats",
           "GET /health",
         ],
@@ -220,19 +268,20 @@ console.log(`OSM Area Server running on http://localhost:${server.port}`);
 console.log("");
 console.log("Endpoints:");
 console.log(
-  "  GET /areas/nearby?lat=X&lng=Y&radius=Z&group=true  - Find areas within radius"
+  "  GET /areas/nearby?lat=X&lng=Y&radius=Z   - Find areas within radius"
 );
 console.log(
-  "  GET /areas/containing?lat=X&lng=Y&group=true       - Find areas containing point"
+  "  GET /areas/containing?lat=X&lng=Y        - Find areas containing point"
 );
 console.log(
-  "  GET /areas/search?q=name&group=true                - Search areas by name"
+  "  GET /areas/search?q=name                 - Search areas by name"
 );
 console.log(
-  "  GET /stats                                         - Database statistics"
+  "  GET /areas/adjacent?q=name|lat=X&lng=Y   - Find adjacent areas with direction/level"
 );
-console.log(
-  "  GET /health                                        - Health check"
-);
+console.log("  GET /stats                               - Database statistics");
+console.log("  GET /health                              - Health check");
 console.log("");
-console.log("Options: group=false to get individual (area, postal_code) rows");
+console.log("Options:");
+console.log("  group=false - Return individual (area, postal_code) rows");
+console.log("  limit=N     - Max number of results");

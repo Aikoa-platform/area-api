@@ -135,6 +135,88 @@ Parameters:
 - `limit` (optional): Max results (default: 20)
 - `group` (optional): Group by area (default: true)
 
+### GET /areas/adjacent
+
+Find adjacent areas around a center. The center can be specified by search term or by coordinates. Each adjacent area includes direction (degrees and cardinal) and level (distance ring from center).
+
+This endpoint is useful for building spatial UIs that show areas in relation to each other without a full map interface.
+
+```bash
+# By search term
+curl "http://localhost:3000/areas/adjacent?q=lauttasaari"
+
+# By coordinates
+curl "http://localhost:3000/areas/adjacent?lat=60.1699&lng=24.9384"
+```
+
+Parameters:
+
+- `q` (optional): Search query to find center area
+- `lat` (optional): Latitude of center point
+- `lng` (optional): Longitude of center point
+- `radius` (optional): Search radius in meters (default: 5000, range: 100-100000)
+- `limit` (optional): Max adjacent results (default: 20)
+
+Note: Either `q` or both `lat`/`lng` are required.
+
+Response:
+
+```json
+{
+  "center": {
+    "osm_id": 25238701,
+    "osm_type": "node",
+    "place_type": "suburb",
+    "name": "Lauttasaari",
+    "names": { "fi": "Lauttasaari", "sv": "Drumsö", "zh": "劳塔岛" },
+    "postal_codes": ["00200", "00210"],
+    "center": { "lat": 60.1598, "lng": 24.8802 },
+    "parent_city": "Helsinki",
+    "country_code": "FI",
+    "distance_meters": 0
+  },
+  "adjacent": [
+    {
+      "osm_id": 3856536383,
+      "osm_type": "node",
+      "place_type": "quarter",
+      "name": "Kotkavuori",
+      "names": { "fi": "Kotkavuori", "sv": "Örnberget" },
+      "postal_codes": ["00200", "00210"],
+      "center": { "lat": 60.1628, "lng": 24.8835 },
+      "parent_city": "Helsinki",
+      "country_code": "FI",
+      "distance_meters": 384,
+      "degrees": 45,
+      "direction": "NE",
+      "level": 1
+    },
+    {
+      "osm_id": 9991896507,
+      "osm_type": "node",
+      "place_type": "quarter",
+      "name": "Myllykallio",
+      "names": { "fi": "Myllykallio", "sv": "Kvarnberget" },
+      "postal_codes": ["00200"],
+      "center": { "lat": 60.1592, "lng": 24.8658 },
+      "parent_city": "Helsinki",
+      "country_code": "FI",
+      "distance_meters": 796,
+      "degrees": 270,
+      "direction": "W",
+      "level": 1
+    }
+  ],
+  "count": 2
+}
+```
+
+Direction fields:
+
+- `degrees`: Direction from center in degrees (0=N, 45=NE, 90=E, 135=SE, 180=S, 225=SW, 270=W, 315=NW)
+- `direction`: Cardinal direction string (N, NE, E, SE, S, SW, W, NW)
+- `level`: Distance ring from center (1=immediately adjacent, 2=next ring, etc.). Within each direction, level 1 is the closest area, level 2 is the next closest, and so on.
+
 ### GET /stats
 
 Get database statistics.

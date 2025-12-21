@@ -18,6 +18,51 @@ export interface BBox {
 const EARTH_RADIUS_METERS = 6371008.8;
 
 /**
+ * Calculate bearing (direction) from point A to point B in degrees.
+ * 0 = North, 90 = East, 180 = South, 270 = West
+ */
+export function calculateBearing(from: Point, to: Point): number {
+  const lat1 = (from.lat * Math.PI) / 180;
+  const lat2 = (to.lat * Math.PI) / 180;
+  const deltaLng = ((to.lng - from.lng) * Math.PI) / 180;
+
+  const y = Math.sin(deltaLng) * Math.cos(lat2);
+  const x =
+    Math.cos(lat1) * Math.sin(lat2) -
+    Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
+
+  let bearing = (Math.atan2(y, x) * 180) / Math.PI;
+  // Normalize to 0-360
+  bearing = (bearing + 360) % 360;
+  return bearing;
+}
+
+/**
+ * Round bearing to nearest sector (1/8 = 45 degrees).
+ * Returns 0, 45, 90, 135, 180, 225, 270, or 315.
+ */
+export function roundBearingToSector(
+  bearing: number,
+  sectors: number = 8
+): number {
+  const sectorSize = 360 / sectors;
+  const halfSector = sectorSize / 2;
+  // Shift by half sector so 0° is centered on North
+  const adjusted = (bearing + halfSector) % 360;
+  const sectorIndex = Math.floor(adjusted / sectorSize);
+  return (sectorIndex * sectorSize) % 360;
+}
+
+/**
+ * Get cardinal direction name from bearing.
+ */
+export function bearingToCardinal(bearing: number): string {
+  const directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  const index = Math.round(bearing / 45) % 8;
+  return directions[index] ?? "N";
+}
+
+/**
  * Calculate haversine distance between two points in meters.
  */
 export function haversineDistance(p1: Point, p2: Point): number {
