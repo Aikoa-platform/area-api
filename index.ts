@@ -28,14 +28,14 @@ import {
   groupAreaResults,
 } from "./db/queries";
 import { initializeDatabase } from "./db/schema";
+import type { Server } from "bun";
 
 const DB_PATH = process.env.DB_PATH || "./db/areas.db";
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const API_KEY = process.env.API_KEY;
 
 if (!API_KEY) {
-  console.error("ERROR: API_KEY environment variable is required");
-  process.exit(1);
+  console.warn("WARNING: API_KEY not set. Auth disabled for localhost only.");
 }
 
 // Initialize database
@@ -43,7 +43,7 @@ let db: Database;
 
 if (existsSync(DB_PATH)) {
   db = new Database(DB_PATH, { readonly: true });
-  db.exec("PRAGMA cache_size = -64000"); // 64MB cache
+  db.run("PRAGMA cache_size = -64000"); // 64MB cache
   console.log(`Loaded database from ${DB_PATH}`);
 } else {
   console.log(`Database not found at ${DB_PATH}`);
@@ -70,7 +70,14 @@ function errorResponse(message: string, status: number = 400): Response {
   return jsonResponse({ error: message }, status);
 }
 
-function validateApiKey(req: Request): boolean {
+function isLocalhost(server: Server<unknown>): boolean {
+  return server.hostname === "localhost" || server.hostname === "127.0.0.1";
+}
+
+function validateApiKey(req: Request, server: Server<unknown>): boolean {
+  // Skip auth for localhost when API_KEY is not set
+  if (isLocalhost(server)) return true;
+
   // Check X-API-Key header
   const apiKeyHeader = req.headers.get("X-API-Key");
   if (apiKeyHeader === API_KEY) return true;
@@ -100,7 +107,7 @@ function parseInt(value: string | null, defaultValue: number): number {
 const server = Bun.serve({
   port: PORT,
 
-  fetch(req) {
+  fetch(req, server) {
     const url = new URL(req.url);
     const path = url.pathname;
 
@@ -113,7 +120,7 @@ const server = Bun.serve({
     }
 
     // Validate API key for all other endpoints
-    if (!validateApiKey(req)) {
+    if (!validateApiKey(req, server)) {
       return jsonResponse({ error: "Unauthorized" }, 401);
     }
 

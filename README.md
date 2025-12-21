@@ -255,15 +255,17 @@ See `.env.example` for a template.
 
 ## Authentication
 
-All endpoints except `/health` require authentication via API key:
+All endpoints except `/health` require authentication via API key in production:
 
 ```bash
 # Using X-API-Key header
-curl -H "X-API-Key: your-api-key" "http://localhost:3000/areas/search?q=kallio"
+curl -H "X-API-Key: your-api-key" "https://your-api.railway.app/areas/search?q=kallio"
 
 # Using Authorization header
-curl -H "Authorization: Bearer your-api-key" "http://localhost:3000/areas/search?q=kallio"
+curl -H "Authorization: Bearer your-api-key" "https://your-api.railway.app/areas/search?q=kallio"
 ```
+
+**Localhost:** When `API_KEY` is not set, authentication is disabled for localhost requests. This makes local development easier.
 
 This API is designed for server-to-server use only. CORS is disabled.
 

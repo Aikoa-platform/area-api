@@ -4,12 +4,12 @@ export function initializeDatabase(dbPath: string): Database {
   const db = new Database(dbPath, { create: true });
 
   // Enable WAL mode for better concurrent read performance
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA synchronous = NORMAL");
-  db.exec("PRAGMA cache_size = -64000"); // 64MB cache
+  db.run("PRAGMA journal_mode = WAL");
+  db.run("PRAGMA synchronous = NORMAL");
+  db.run("PRAGMA cache_size = -64000"); // 64MB cache
 
   // Create raw areas table (intermediate, for processing)
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS raw_areas (
       id INTEGER PRIMARY KEY,
       osm_id INTEGER NOT NULL,
@@ -28,7 +28,7 @@ export function initializeDatabase(dbPath: string): Database {
   `);
 
   // Create postal code boundaries table
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS postal_boundaries (
       id INTEGER PRIMARY KEY,
       osm_id INTEGER NOT NULL,
@@ -45,7 +45,7 @@ export function initializeDatabase(dbPath: string): Database {
   `);
 
   // Create administrative boundaries table
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS admin_boundaries (
       id INTEGER PRIMARY KEY,
       osm_id INTEGER NOT NULL,
@@ -66,7 +66,7 @@ export function initializeDatabase(dbPath: string): Database {
   `);
 
   // Create final denormalized areas table
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS areas (
       id INTEGER PRIMARY KEY,
       osm_id INTEGER NOT NULL,
@@ -91,7 +91,7 @@ export function initializeDatabase(dbPath: string): Database {
   `);
 
   // Create R-tree spatial index for areas
-  db.exec(`
+  db.run(`
     CREATE VIRTUAL TABLE IF NOT EXISTS areas_rtree USING rtree(
       id,
       min_lat, max_lat,
@@ -100,7 +100,7 @@ export function initializeDatabase(dbPath: string): Database {
   `);
 
   // Create R-tree for postal boundaries (used during processing)
-  db.exec(`
+  db.run(`
     CREATE VIRTUAL TABLE IF NOT EXISTS postal_rtree USING rtree(
       id,
       min_lat, max_lat,
@@ -109,7 +109,7 @@ export function initializeDatabase(dbPath: string): Database {
   `);
 
   // Create R-tree for admin boundaries (used during processing)
-  db.exec(`
+  db.run(`
     CREATE VIRTUAL TABLE IF NOT EXISTS admin_rtree USING rtree(
       id,
       min_lat, max_lat,
@@ -118,7 +118,7 @@ export function initializeDatabase(dbPath: string): Database {
   `);
 
   // Create address points table for postal code sampling
-  db.exec(`
+  db.run(`
     CREATE TABLE IF NOT EXISTS address_points (
       id INTEGER PRIMARY KEY,
       osm_id INTEGER NOT NULL,
@@ -130,7 +130,7 @@ export function initializeDatabase(dbPath: string): Database {
   `);
 
   // R-tree for address points
-  db.exec(`
+  db.run(`
     CREATE VIRTUAL TABLE IF NOT EXISTS address_rtree USING rtree(
       id,
       min_lat, max_lat,
@@ -139,15 +139,13 @@ export function initializeDatabase(dbPath: string): Database {
   `);
 
   // Create indexes
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_areas_name ON areas(name)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_areas_postal ON areas(postal_code)`);
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_areas_country ON areas(country_code)`
-  );
-  db.exec(
+  db.run(`CREATE INDEX IF NOT EXISTS idx_areas_name ON areas(name)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_areas_postal ON areas(postal_code)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_areas_country ON areas(country_code)`);
+  db.run(
     `CREATE INDEX IF NOT EXISTS idx_admin_level ON admin_boundaries(admin_level)`
   );
-  db.exec(
+  db.run(
     `CREATE INDEX IF NOT EXISTS idx_admin_country ON admin_boundaries(country_code)`
   );
 
@@ -155,18 +153,18 @@ export function initializeDatabase(dbPath: string): Database {
 }
 
 export function clearProcessingTables(db: Database): void {
-  db.exec("DELETE FROM raw_areas");
-  db.exec("DELETE FROM postal_boundaries");
-  db.exec("DELETE FROM admin_boundaries");
-  db.exec("DELETE FROM address_points");
-  db.exec("DELETE FROM postal_rtree");
-  db.exec("DELETE FROM admin_rtree");
-  db.exec("DELETE FROM address_rtree");
+  db.run("DELETE FROM raw_areas");
+  db.run("DELETE FROM postal_boundaries");
+  db.run("DELETE FROM admin_boundaries");
+  db.run("DELETE FROM address_points");
+  db.run("DELETE FROM postal_rtree");
+  db.run("DELETE FROM admin_rtree");
+  db.run("DELETE FROM address_rtree");
 }
 
 export function clearFinalTables(db: Database): void {
-  db.exec("DELETE FROM areas");
-  db.exec("DELETE FROM areas_rtree");
+  db.run("DELETE FROM areas");
+  db.run("DELETE FROM areas_rtree");
 }
 
 export interface RawArea {

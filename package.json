@@ -11,7 +11,7 @@
     "ingest:help": "bun run ingest/run.ts --help"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "^1.3.5",
     "@types/geojson": "^7946.0.14"
   },
   "peerDependencies": {

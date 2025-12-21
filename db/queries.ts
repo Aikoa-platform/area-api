@@ -10,6 +10,8 @@ import {
   calculateBearing,
   roundBearingToSector,
   bearingToCardinal,
+  normalizeText,
+  fuzzyMatchScore,
 } from "../lib/geo";
 
 export interface AreaResult {
@@ -245,26 +247,139 @@ export function findAreasContaining(
 }
 
 /**
- * Search areas by name.
+ * Search areas by name or postal code with fuzzy matching.
+ * Uses multiple strategies: exact, prefix, contains, and Levenshtein distance.
+ * All matching is case-insensitive.
  */
 export function searchAreasByName(
   db: Database,
   query: string,
   limit: number = 20
 ): AreaResult[] {
-  const searchPattern = `%${query}%`;
+  // Normalize query: lowercase and remove diacritics
+  const lowerQuery = query.toLowerCase().trim();
+  const normalizedQuery = normalizeText(query);
 
-  const rows = db
-    .query<AreaRow, [string, string, number]>(
-      `
-    SELECT * FROM areas
-    WHERE name LIKE ? OR names LIKE ?
-    LIMIT ?
-  `
-    )
-    .all(searchPattern, searchPattern, limit);
+  // Get more candidates than needed for fuzzy filtering
+  const candidateLimit = Math.max(limit * 5, 100);
 
-  return rows.map((row) => rowToResult(row));
+  // Check if query looks like a postal code (numeric or alphanumeric)
+  const isPostalCodeQuery = /^[\d\w]{2,10}$/i.test(lowerQuery);
+
+  // Search patterns (all lowercase for case-insensitive matching)
+  const exactPattern = lowerQuery;
+  const prefixPattern = `${lowerQuery}%`;
+  const containsPattern = `%${lowerQuery}%`;
+  const normalizedPrefixPattern = `${normalizedQuery}%`;
+  const normalizedContainsPattern = `%${normalizedQuery}%`;
+
+  // Build query based on whether we're also searching postal codes
+  let rows: AreaRow[];
+
+  if (isPostalCodeQuery) {
+    // Search both names and postal codes
+    rows = db
+      .query<
+        AreaRow,
+        [string, string, string, string, string, string, string, string, number]
+      >(
+        `
+      SELECT DISTINCT * FROM areas
+      WHERE LOWER(name) = ?
+         OR LOWER(name) LIKE ?
+         OR LOWER(name) LIKE ?
+         OR LOWER(name) LIKE ?
+         OR LOWER(name) LIKE ?
+         OR LOWER(names) LIKE ?
+         OR postal_code = ?
+         OR postal_code LIKE ?
+      LIMIT ?
+    `
+      )
+      .all(
+        exactPattern,
+        prefixPattern,
+        containsPattern,
+        normalizedPrefixPattern,
+        normalizedContainsPattern,
+        containsPattern,
+        lowerQuery.toUpperCase(), // Postal codes are often uppercase
+        `${lowerQuery.toUpperCase()}%`,
+        candidateLimit
+      );
+  } else {
+    // Search names only
+    rows = db
+      .query<AreaRow, [string, string, string, string, string, string, number]>(
+        `
+      SELECT DISTINCT * FROM areas
+      WHERE LOWER(name) = ?
+         OR LOWER(name) LIKE ?
+         OR LOWER(name) LIKE ?
+         OR LOWER(name) LIKE ?
+         OR LOWER(name) LIKE ?
+         OR LOWER(names) LIKE ?
+      LIMIT ?
+    `
+      )
+      .all(
+        exactPattern,
+        prefixPattern,
+        containsPattern,
+        normalizedPrefixPattern,
+        normalizedContainsPattern,
+        containsPattern,
+        candidateLimit
+      );
+  }
+
+  // Score each result using fuzzy matching
+  const scoredResults: Array<{ row: AreaRow; score: number }> = [];
+
+  for (const row of rows) {
+    let bestScore = 0;
+
+    // Check postal code match (highest priority for postal code queries)
+    if (row.postal_code) {
+      const postalLower = row.postal_code.toLowerCase();
+      if (postalLower === lowerQuery) {
+        bestScore = 1.0; // Exact postal code match
+      } else if (postalLower.startsWith(lowerQuery)) {
+        bestScore = 0.95; // Postal code prefix match
+      }
+    }
+
+    // Check main name (case-insensitive)
+    const nameScore = fuzzyMatchScore(lowerQuery, row.name.toLowerCase());
+    if (nameScore > bestScore) {
+      bestScore = nameScore;
+    }
+
+    // Also check translated names
+    try {
+      const names = JSON.parse(row.names) as Record<string, string>;
+      for (const translatedName of Object.values(names)) {
+        const translatedScore = fuzzyMatchScore(
+          lowerQuery,
+          translatedName.toLowerCase()
+        );
+        if (translatedScore > bestScore) {
+          bestScore = translatedScore;
+        }
+      }
+    } catch {
+      // Ignore JSON parse errors
+    }
+
+    if (bestScore > 0) {
+      scoredResults.push({ row, score: bestScore });
+    }
+  }
+
+  // Sort by score (highest first) and limit
+  scoredResults.sort((a, b) => b.score - a.score);
+
+  return scoredResults.slice(0, limit).map(({ row }) => rowToResult(row));
 }
 
 /**
@@ -354,32 +469,18 @@ export interface AdjacentSearchResult {
 }
 
 /**
- * Find a center area by search term.
+ * Find a center area by search term (uses fuzzy matching).
  */
 function findCenterBySearch(
   db: Database,
   query: string
 ): GroupedAreaResult | null {
-  const searchPattern = `%${query}%`;
-  const exactStartPattern = `${query}%`;
-  const rows = db
-    .query<AreaRow, [string, string, string, string]>(
-      `
-    SELECT * FROM areas
-    WHERE name LIKE ? OR names LIKE ?
-    ORDER BY 
-      CASE WHEN name = ? THEN 0 ELSE 1 END,
-      CASE WHEN name LIKE ? THEN 0 ELSE 1 END,
-      name
-    LIMIT 10
-  `
-    )
-    .all(searchPattern, searchPattern, query, exactStartPattern);
+  // Use the fuzzy search to get candidates
+  const candidates = searchAreasByName(db, query, 10);
 
-  if (rows.length === 0) return null;
+  if (candidates.length === 0) return null;
 
-  const results = rows.map((row) => rowToResult(row, 0));
-  const grouped = groupAreaResults(results);
+  const grouped = groupAreaResults(candidates);
   return grouped[0] ?? null;
 }
 
