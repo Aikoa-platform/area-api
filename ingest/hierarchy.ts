@@ -117,18 +117,19 @@ function findNearestCity(
 
     if (candidates.length > 0) {
       // Find the closest one
-      let closest = candidates[0];
+      let closest = candidates[0]!;
       let minDist =
         Math.pow(lat - closest.center_lat, 2) +
         Math.pow(lng - closest.center_lng, 2);
 
       for (let i = 1; i < candidates.length; i++) {
+        const candidate = candidates[i]!;
         const dist =
-          Math.pow(lat - candidates[i].center_lat, 2) +
-          Math.pow(lng - candidates[i].center_lng, 2);
+          Math.pow(lat - candidate.center_lat, 2) +
+          Math.pow(lng - candidate.center_lng, 2);
         if (dist < minDist) {
           minDist = dist;
-          closest = candidates[i];
+          closest = candidate;
         }
       }
 

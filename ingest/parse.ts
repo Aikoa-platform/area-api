@@ -107,7 +107,7 @@ async function insertPostalBoundaries(
 
       insertBoundary.run(
         boundary.osm_id,
-        boundary.postal_code,
+        boundary.postal_code ?? null,
         JSON.stringify(boundary.polygon),
         center.lat,
         center.lng,
@@ -118,15 +118,15 @@ async function insertPostalBoundaries(
       );
 
       // Get the inserted row ID for R-tree
-      const result = db
-        .query<{ id: number }, []>(
+      const row = db
+        .query<{ id: number }, [number]>(
           "SELECT id FROM postal_boundaries WHERE osm_id = ?"
         )
         .get(boundary.osm_id);
 
-      if (result) {
+      if (row) {
         insertRtree.run(
-          result.id,
+          row.id,
           bbox.minLat,
           bbox.maxLat,
           bbox.minLng,
@@ -233,18 +233,18 @@ async function insertAdminBoundaries(
         bboxMaxLng = centerLng;
       }
 
-      // Use extracted country code or default
+      // Use extracted country code or default (null for country-level boundaries)
       const countryCode =
         boundary.country_code ||
-        (boundary.admin_level === 2 ? undefined : defaultCountryCode);
+        (boundary.admin_level === 2 ? null : defaultCountryCode);
 
       insertBoundary.run(
         boundary.osm_id,
-        boundary.admin_level,
+        boundary.admin_level ?? 0,
         boundary.name,
         boundary.names ? JSON.stringify(boundary.names) : null,
-        boundary.place_type || null,
-        countryCode || null,
+        boundary.place_type ?? null,
+        countryCode ?? null,
         boundary.polygon ? JSON.stringify(boundary.polygon) : null,
         centerLat,
         centerLng,
@@ -257,7 +257,7 @@ async function insertAdminBoundaries(
       // Add to R-tree if we have bbox
       if (bboxMinLat !== null) {
         const queryResult = db
-          .query<{ id: number }, []>(
+          .query<{ id: number }, [number]>(
             "SELECT id FROM admin_boundaries WHERE osm_id = ?"
           )
           .get(boundary.osm_id);

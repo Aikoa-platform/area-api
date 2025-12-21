@@ -23,6 +23,7 @@ import {
   searchAreasByName,
   getStats,
   getCountries,
+  groupAreaResults,
 } from "./db/queries";
 import { initializeDatabase } from "./db/schema";
 
@@ -92,7 +93,10 @@ const server = Bun.serve({
 
     // Health check
     if (path === "/health") {
-      return jsonResponse({ status: "ok", timestamp: new Date().toISOString() });
+      return jsonResponse({
+        status: "ok",
+        timestamp: new Date().toISOString(),
+      });
     }
 
     // Stats
@@ -108,6 +112,7 @@ const server = Bun.serve({
       const lng = parseFloat(url.searchParams.get("lng"));
       const radius = parseFloat(url.searchParams.get("radius")) || 5000;
       const limit = parseInt(url.searchParams.get("limit"), 50);
+      const group = url.searchParams.get("group") !== "false"; // Default to grouped
 
       if (lat === null || lng === null) {
         return errorResponse("lat and lng query parameters are required");
@@ -125,8 +130,18 @@ const server = Bun.serve({
         return errorResponse("radius must be between 1 and 100000 meters");
       }
 
-      const areas = findAreasNearby(db, lat, lng, radius, limit);
-      return jsonResponse({ areas, count: areas.length });
+      // Get more raw results to ensure we have enough after grouping
+      const rawLimit = group ? limit * 3 : limit;
+      const rawAreas = findAreasNearby(db, lat, lng, radius, rawLimit);
+
+      if (group) {
+        const areas = groupAreaResults(rawAreas).slice(0, limit);
+        return jsonResponse({ areas, count: areas.length });
+      }
+      return jsonResponse({
+        areas: rawAreas.slice(0, limit),
+        count: rawAreas.length,
+      });
     }
 
     // Find areas containing a point
@@ -134,6 +149,7 @@ const server = Bun.serve({
       const lat = parseFloat(url.searchParams.get("lat"));
       const lng = parseFloat(url.searchParams.get("lng"));
       const limit = parseInt(url.searchParams.get("limit"), 10);
+      const group = url.searchParams.get("group") !== "false"; // Default to grouped
 
       if (lat === null || lng === null) {
         return errorResponse("lat and lng query parameters are required");
@@ -147,21 +163,40 @@ const server = Bun.serve({
         return errorResponse("lng must be between -180 and 180");
       }
 
-      const areas = findAreasContaining(db, lat, lng, limit);
-      return jsonResponse({ areas, count: areas.length });
+      const rawLimit = group ? limit * 3 : limit;
+      const rawAreas = findAreasContaining(db, lat, lng, rawLimit);
+
+      if (group) {
+        const areas = groupAreaResults(rawAreas).slice(0, limit);
+        return jsonResponse({ areas, count: areas.length });
+      }
+      return jsonResponse({
+        areas: rawAreas.slice(0, limit),
+        count: rawAreas.length,
+      });
     }
 
     // Search areas by name
     if (path === "/areas/search") {
       const query = url.searchParams.get("q");
       const limit = parseInt(url.searchParams.get("limit"), 20);
+      const group = url.searchParams.get("group") !== "false"; // Default to grouped
 
       if (!query || query.length < 2) {
         return errorResponse("q query parameter must be at least 2 characters");
       }
 
-      const areas = searchAreasByName(db, query, limit);
-      return jsonResponse({ areas, count: areas.length });
+      const rawLimit = group ? limit * 3 : limit;
+      const rawAreas = searchAreasByName(db, query, rawLimit);
+
+      if (group) {
+        const areas = groupAreaResults(rawAreas).slice(0, limit);
+        return jsonResponse({ areas, count: areas.length });
+      }
+      return jsonResponse({
+        areas: rawAreas.slice(0, limit),
+        count: rawAreas.length,
+      });
     }
 
     // Not found
@@ -184,8 +219,20 @@ const server = Bun.serve({
 console.log(`OSM Area Server running on http://localhost:${server.port}`);
 console.log("");
 console.log("Endpoints:");
-console.log("  GET /areas/nearby?lat=X&lng=Y&radius=Z  - Find areas within radius");
-console.log("  GET /areas/containing?lat=X&lng=Y       - Find areas containing point");
-console.log("  GET /areas/search?q=name               - Search areas by name");
-console.log("  GET /stats                             - Database statistics");
-console.log("  GET /health                            - Health check");
+console.log(
+  "  GET /areas/nearby?lat=X&lng=Y&radius=Z&group=true  - Find areas within radius"
+);
+console.log(
+  "  GET /areas/containing?lat=X&lng=Y&group=true       - Find areas containing point"
+);
+console.log(
+  "  GET /areas/search?q=name&group=true                - Search areas by name"
+);
+console.log(
+  "  GET /stats                                         - Database statistics"
+);
+console.log(
+  "  GET /health                                        - Health check"
+);
+console.log("");
+console.log("Options: group=false to get individual (area, postal_code) rows");

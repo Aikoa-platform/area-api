@@ -168,8 +168,8 @@ export function buildPolygonFromWay(
   if (coords.length < 4) return null;
 
   // Ensure ring is closed
-  const first = coords[0];
-  const last = coords[coords.length - 1];
+  const first = coords[0]!;
+  const last = coords[coords.length - 1]!;
   if (first[0] !== last[0] || first[1] !== last[1]) {
     coords = [...coords, first];
   }
@@ -225,7 +225,7 @@ export function buildPolygonFromRelation(
   if (outerRings.length === 1) {
     return {
       type: "Polygon",
-      coordinates: [outerRings[0], ...innerRings],
+      coordinates: [outerRings[0]!, ...innerRings],
     };
   }
 
@@ -260,8 +260,8 @@ function joinWays(
     let extended = true;
     while (extended && remaining.size > 0) {
       extended = false;
-      const ringStart = ring[0];
-      const ringEnd = ring[ring.length - 1];
+      const ringStart = ring[0]!;
+      const ringEnd = ring[ring.length - 1]!;
 
       for (const ref of remaining) {
         const coords = wayGeometries.get(ref);
@@ -270,8 +270,8 @@ function joinWays(
           continue;
         }
 
-        const wayStart = coords[0];
-        const wayEnd = coords[coords.length - 1];
+        const wayStart = coords[0]!;
+        const wayEnd = coords[coords.length - 1]!;
 
         // Check if this way connects to our ring
         if (coordsEqual(ringEnd, wayStart)) {
@@ -307,13 +307,16 @@ function joinWays(
 }
 
 function coordsEqual(a: GeoJSON.Position, b: GeoJSON.Position): boolean {
-  return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9;
+  return (
+    Math.abs((a[0] ?? 0) - (b[0] ?? 0)) < 1e-9 &&
+    Math.abs((a[1] ?? 0) - (b[1] ?? 0)) < 1e-9
+  );
 }
 
 function ensureClosed(ring: GeoJSON.Position[]): GeoJSON.Position[] {
   if (ring.length < 2) return ring;
-  const first = ring[0];
-  const last = ring[ring.length - 1];
+  const first = ring[0]!;
+  const last = ring[ring.length - 1]!;
   if (!coordsEqual(first, last)) {
     return [...ring, first];
   }
@@ -330,9 +333,9 @@ export function calculateCentroid(
 
   let sumLon = 0;
   let sumLat = 0;
-  for (const [lon, lat] of coords) {
-    sumLon += lon;
-    sumLat += lat;
+  for (const coord of coords) {
+    sumLon += coord[0] ?? 0;
+    sumLat += coord[1] ?? 0;
   }
 
   return [sumLon / coords.length, sumLat / coords.length];

@@ -27,6 +27,23 @@ export interface AreaResult {
   distance_meters?: number;
 }
 
+export interface GroupedAreaResult {
+  osm_id: number;
+  osm_type: string;
+  place_type: string;
+  name: string;
+  names: Record<string, string>;
+  center: {
+    lat: number;
+    lng: number;
+  };
+  postal_codes: string[];
+  country_code: string;
+  parent_city: string | null;
+  parent_municipality: string | null;
+  distance_meters?: number;
+}
+
 interface AreaRow {
   id: number;
   osm_id: number;
@@ -61,6 +78,57 @@ function rowToResult(row: AreaRow, distance?: number): AreaResult {
     parent_municipality: row.parent_municipality,
     distance_meters: distance,
   };
+}
+
+/**
+ * Group area results by osm_id, aggregating postal codes.
+ */
+export function groupAreaResults(results: AreaResult[]): GroupedAreaResult[] {
+  const grouped = new Map<string, GroupedAreaResult>();
+
+  for (const result of results) {
+    const key = `${result.osm_type}-${result.osm_id}`;
+    const existing = grouped.get(key);
+
+    if (existing) {
+      if (
+        result.postal_code &&
+        !existing.postal_codes.includes(result.postal_code)
+      ) {
+        existing.postal_codes.push(result.postal_code);
+      }
+      // Keep the smallest distance
+      if (result.distance_meters !== undefined) {
+        if (
+          existing.distance_meters === undefined ||
+          result.distance_meters < existing.distance_meters
+        ) {
+          existing.distance_meters = result.distance_meters;
+        }
+      }
+    } else {
+      grouped.set(key, {
+        osm_id: result.osm_id,
+        osm_type: result.osm_type,
+        place_type: result.place_type,
+        name: result.name,
+        names: result.names,
+        center: result.center,
+        postal_codes: result.postal_code ? [result.postal_code] : [],
+        country_code: result.country_code,
+        parent_city: result.parent_city,
+        parent_municipality: result.parent_municipality,
+        distance_meters: result.distance_meters,
+      });
+    }
+  }
+
+  // Convert to array and sort by distance
+  const results_array = Array.from(grouped.values());
+  results_array.sort(
+    (a, b) => (a.distance_meters ?? 0) - (b.distance_meters ?? 0)
+  );
+  return results_array;
 }
 
 /**
@@ -108,7 +176,7 @@ export function findAreasNearby(
 }
 
 /**
- * Find areas whose polygon contains a point.
+ * Find areas whose polygon contains a point, or nearest areas if no polygon match.
  */
 export function findAreasContaining(
   db: Database,
@@ -116,7 +184,7 @@ export function findAreasContaining(
   lng: number,
   limit: number = 10
 ): AreaResult[] {
-  // Query areas using R-tree (find areas whose bbox contains the point)
+  // First, try to find areas whose bbox contains the point
   const rows = db
     .query<AreaRow, [number, number, number, number]>(
       `
@@ -149,21 +217,28 @@ export function findAreasContaining(
         // Invalid polygon, skip
       }
     } else {
-      // No polygon, check if point is very close to center (within ~100m)
+      // No polygon - include it but with distance for sorting
       const distance = haversineDistance(
         { lat, lng },
         { lat: row.center_lat, lng: row.center_lng }
       );
-
-      if (distance < 100) {
-        results.push(rowToResult(row, Math.round(distance)));
-      }
+      results.push(rowToResult(row, Math.round(distance)));
     }
   }
 
-  // Sort by distance to center
-  results.sort((a, b) => (a.distance_meters || 0) - (b.distance_meters || 0));
-  return results.slice(0, limit);
+  // If we found polygon matches, return only those (sorted by distance)
+  const polygonMatches = results.filter(
+    (r) => r.distance_meters !== undefined && r.distance_meters < 500
+  );
+  if (polygonMatches.length > 0) {
+    polygonMatches.sort(
+      (a, b) => (a.distance_meters || 0) - (b.distance_meters || 0)
+    );
+    return polygonMatches.slice(0, limit);
+  }
+
+  // Otherwise, fall back to nearby search with a small radius
+  return findAreasNearby(db, lat, lng, 1000, limit);
 }
 
 /**
@@ -177,14 +252,14 @@ export function searchAreasByName(
   const searchPattern = `%${query}%`;
 
   const rows = db
-    .query<AreaRow, [string, string]>(
+    .query<AreaRow, [string, string, number]>(
       `
     SELECT * FROM areas
     WHERE name LIKE ? OR names LIKE ?
     LIMIT ?
   `
     )
-    .all(searchPattern, searchPattern);
+    .all(searchPattern, searchPattern, limit);
 
   return rows.map((row) => rowToResult(row));
 }

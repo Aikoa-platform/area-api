@@ -49,6 +49,7 @@ bun run ingest:help
 ```
 
 The ingestion pipeline:
+
 1. Downloads country extract from Geofabrik (~300MB for Finland)
 2. Filters with osmium to ~1MB
 3. Parses places, postal boundaries, and admin boundaries
@@ -69,28 +70,33 @@ bun run dev
 
 ### GET /areas/nearby
 
-Find areas within a radius of a point.
+Find areas within a radius of a point. Results are grouped by area by default, with all postal codes for each area collected into an array.
 
 ```bash
 curl "http://localhost:3000/areas/nearby?lat=60.1699&lng=24.9384&radius=5000"
 ```
 
 Parameters:
+
 - `lat` (required): Latitude
-- `lng` (required): Longitude  
+- `lng` (required): Longitude
 - `radius` (optional): Radius in meters (default: 5000, max: 100000)
 - `limit` (optional): Max results (default: 50)
+- `group` (optional): Group by area (default: true). Set to `false` to get individual (area, postal_code) rows.
 
-Response:
+Response (grouped):
+
 ```json
 {
   "areas": [
     {
-      "osm_id": 12345,
+      "osm_id": 25238701,
+      "osm_type": "node",
+      "place_type": "suburb",
       "name": "Lauttasaari",
-      "names": {"fi": "Lauttasaari", "sv": "Drumsö"},
-      "postal_code": "00200",
-      "center": {"lat": 60.1603, "lng": 24.8852},
+      "names": { "fi": "Lauttasaari", "sv": "Drumsö", "zh": "劳塔岛" },
+      "postal_codes": ["00200", "00210"],
+      "center": { "lat": 60.1603, "lng": 24.8852 },
       "parent_city": "Helsinki",
       "country_code": "FI",
       "distance_meters": 1523
@@ -108,6 +114,13 @@ Find areas whose polygon contains an exact point (reverse geocode to suburb).
 curl "http://localhost:3000/areas/containing?lat=60.1834&lng=24.9500"
 ```
 
+Parameters:
+
+- `lat` (required): Latitude
+- `lng` (required): Longitude
+- `limit` (optional): Max results (default: 10)
+- `group` (optional): Group by area (default: true)
+
 ### GET /areas/search
 
 Search areas by name.
@@ -115,6 +128,12 @@ Search areas by name.
 ```bash
 curl "http://localhost:3000/areas/search?q=kallio"
 ```
+
+Parameters:
+
+- `q` (required): Search query (min 2 characters)
+- `limit` (optional): Max results (default: 20)
+- `group` (optional): Group by area (default: true)
 
 ### GET /stats
 
@@ -135,6 +154,7 @@ curl "http://localhost:3000/health"
 ## Supported Countries
 
 Run `bun run ingest -- --list` to see all supported countries. Currently includes:
+
 - Nordic: Finland, Sweden, Norway, Denmark, Estonia
 - Central Europe: Germany, France, Netherlands, Belgium, Austria, Switzerland, Poland
 - Southern Europe: Spain, Portugal, Italy
@@ -173,19 +193,19 @@ locations-server/
 
 The final `areas` table stores each unique (area, postal_code) combination:
 
-| Column | Description |
-|--------|-------------|
-| osm_id | OpenStreetMap element ID |
-| osm_type | node, way, or relation |
-| place_type | suburb, city_district, borough, neighbourhood, quarter |
-| name | Default/local name |
-| names | JSON with all translations |
-| center_lat/lng | Center point coordinates |
-| polygon | GeoJSON polygon (nullable) |
-| postal_code | Postal code for this combination |
-| country_code | ISO 3166-1 alpha-2 code |
-| parent_city | Containing city/town name |
-| parent_municipality | Containing municipality name |
+| Column              | Description                                            |
+| ------------------- | ------------------------------------------------------ |
+| osm_id              | OpenStreetMap element ID                               |
+| osm_type            | node, way, or relation                                 |
+| place_type          | suburb, city_district, borough, neighbourhood, quarter |
+| name                | Default/local name                                     |
+| names               | JSON with all translations                             |
+| center_lat/lng      | Center point coordinates                               |
+| polygon             | GeoJSON polygon (nullable)                             |
+| postal_code         | Postal code for this combination                       |
+| country_code        | ISO 3166-1 alpha-2 code                                |
+| parent_city         | Containing city/town name                              |
+| parent_municipality | Containing municipality name                           |
 
 ## License
 
