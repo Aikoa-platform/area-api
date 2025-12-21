@@ -1,0 +1,23 @@
+{
+  "name": "locations-server",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun --hot run index.ts",
+    "ingest": "bun run ingest/run.ts",
+    "ingest:finland": "bun run ingest/run.ts --country finland",
+    "ingest:help": "bun run ingest/run.ts --help"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/geojson": "^7946.0.14"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "osm-pbf-parser": "^2.3.0"
+  }
+}
