@@ -79,6 +79,7 @@ export function initializeDatabase(dbPath: string): Database {
       polygon TEXT,
       postal_code TEXT,
       country_code TEXT NOT NULL,
+      country_name TEXT NOT NULL,
       parent_city TEXT,
       parent_city_osm_id INTEGER,
       parent_municipality TEXT,
@@ -224,6 +225,7 @@ export interface Area {
   polygon: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
   postal_code: string | null;
   country_code: string;
+  country_name: string;
   parent_city: string | null;
   parent_city_osm_id: number | null;
   parent_municipality: string | null;

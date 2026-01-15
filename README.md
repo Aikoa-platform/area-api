@@ -83,6 +83,7 @@ Parameters:
 - `radius` (optional): Radius in meters (default: 5000, max: 100000)
 - `limit` (optional): Max results (default: 50)
 - `group` (optional): Group by area (default: true). Set to `false` to get individual (area, postal_code) rows.
+- `country_code` (optional): Filter results to a specific country (ISO 3166-1 alpha-2, e.g., "FI", "SE")
 
 Response (grouped):
 
@@ -123,10 +124,17 @@ Parameters:
 
 ### GET /areas/search
 
-Search areas by name.
+Search areas by name. Optionally bias results towards a geographic point.
 
 ```bash
+# Basic search
 curl "http://localhost:3000/areas/search?q=kallio"
+
+# Search with geographic bias (results include distance_meters)
+curl "http://localhost:3000/areas/search?q=kallio&lat=60.1699&lng=24.9384"
+
+# Search within a specific country
+curl "http://localhost:3000/areas/search?q=kallio&country_code=FI"
 ```
 
 Parameters:
@@ -134,6 +142,11 @@ Parameters:
 - `q` (required): Search query (min 2 characters)
 - `limit` (optional): Max results (default: 20)
 - `group` (optional): Group by area (default: true)
+- `country_code` (optional): Filter results to a specific country (ISO 3166-1 alpha-2)
+- `lat` (optional): Latitude for geographic bias
+- `lng` (optional): Longitude for geographic bias
+
+When `lat` and `lng` are provided, results include `distance_meters` indicating the distance from the bias point. Results with similar match scores are sorted by proximity to the bias point.
 
 ### GET /areas/adjacent
 
@@ -147,6 +160,9 @@ curl "http://localhost:3000/areas/adjacent?q=lauttasaari"
 
 # By coordinates
 curl "http://localhost:3000/areas/adjacent?lat=60.1699&lng=24.9384"
+
+# Limit to a specific country
+curl "http://localhost:3000/areas/adjacent?q=lauttasaari&country_code=FI"
 ```
 
 Parameters:
@@ -156,6 +172,7 @@ Parameters:
 - `lng` (optional): Longitude of center point
 - `radius` (optional): Search radius in meters (default: 5000, range: 100-100000)
 - `limit` (optional): Max adjacent results (default: 20)
+- `country_code` (optional): Filter results to a specific country (ISO 3166-1 alpha-2)
 
 Note: Either `q` or both `lat`/`lng` are required.
 
@@ -268,6 +285,198 @@ curl -H "Authorization: Bearer your-api-key" "https://your-api.railway.app/areas
 **Localhost:** When `API_KEY` is not set, authentication is disabled for localhost requests. This makes local development easier.
 
 This API is designed for server-to-server use only. CORS is disabled.
+
+## Integration Guide
+
+### Quick Start
+
+```typescript
+const API_BASE = "https://your-api.railway.app";
+const API_KEY = "your-api-key";
+
+async function fetchAreas(endpoint: string) {
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    headers: { "X-API-Key": API_KEY },
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Request failed");
+  }
+  return response.json();
+}
+```
+
+### TypeScript Types
+
+```typescript
+interface Area {
+  osm_id: number;
+  osm_type: "node" | "way" | "relation";
+  place_type:
+    | "suburb"
+    | "city_district"
+    | "borough"
+    | "neighbourhood"
+    | "quarter";
+  name: string;
+  names: Record<string, string>; // { fi: "Lauttasaari", sv: "Drumsö", ... }
+  postal_codes: string[];
+  center: { lat: number; lng: number };
+  parent_city: string | null;
+  country_code: string;
+  distance_meters: number;
+}
+
+interface AdjacentArea extends Area {
+  degrees: number; // 0-359, where 0=N, 90=E, 180=S, 270=W
+  direction: "N" | "NE" | "E" | "SE" | "S" | "SW" | "W" | "NW";
+  level: number; // Distance ring: 1=closest, 2=next ring, etc.
+}
+
+interface NearbyResponse {
+  areas: Area[];
+  count: number;
+}
+
+interface AdjacentResponse {
+  center: Area | null;
+  adjacent: AdjacentArea[];
+  count: number;
+}
+```
+
+### Find Nearby Areas
+
+Find areas within a radius of coordinates. Useful for "areas near me" features.
+
+```typescript
+const { areas } = await fetchAreas(
+  `/areas/nearby?lat=60.1699&lng=24.9384&radius=3000`
+);
+
+// areas = [
+//   { name: "Kamppi", postal_codes: ["00100"], distance_meters: 245, ... },
+//   { name: "Punavuori", postal_codes: ["00120", "00150"], distance_meters: 892, ... }
+// ]
+```
+
+### Reverse Geocode to Suburb
+
+Find which suburb/neighborhood contains a point. Returns areas whose polygon boundary contains the coordinate.
+
+```typescript
+const { areas } = await fetchAreas(`/areas/containing?lat=60.1834&lng=24.9500`);
+
+if (areas.length > 0) {
+  console.log(`You are in ${areas[0].name}`);
+}
+```
+
+### Search by Name
+
+Search areas by name with prefix matching. Searches across all language variants.
+
+```typescript
+const { areas } = await fetchAreas(`/areas/search?q=kallio`);
+
+// Returns: Kallio (Helsinki), Kallionpohja, etc.
+```
+
+#### Search with Geographic Bias
+
+When you provide bias coordinates, results with similar match scores are sorted by proximity. Each result includes `distance_meters` from the bias point.
+
+```typescript
+const { areas } = await fetchAreas(
+  `/areas/search?q=kallio&lat=60.1699&lng=24.9384`
+);
+
+// areas[0].distance_meters = 1234 (meters from the bias point)
+```
+
+#### Filter by Country
+
+All endpoints (except `/containing`) support filtering by country code:
+
+```typescript
+// Only search in Finland
+const { areas } = await fetchAreas(`/areas/search?q=kallio&country_code=FI`);
+
+// Nearby areas in Sweden only
+const { areas } = await fetchAreas(
+  `/areas/nearby?lat=59.3293&lng=18.0686&country_code=SE`
+);
+```
+
+### Get Adjacent Areas with Directions
+
+Find areas surrounding a center point with compass directions and distance levels. Useful for building spatial UIs without a map.
+
+```typescript
+// By search term
+const result = await fetchAreas(`/areas/adjacent?q=lauttasaari`);
+
+// Or by coordinates
+const result = await fetchAreas(
+  `/areas/adjacent?lat=60.1699&lng=24.9384&radius=5000`
+);
+
+// result = {
+//   center: { name: "Lauttasaari", ... },
+//   adjacent: [
+//     { name: "Ruoholahti", direction: "E", level: 1, degrees: 85, ... },
+//     { name: "Munkkiniemi", direction: "N", level: 2, degrees: 5, ... }
+//   ]
+// }
+```
+
+### Error Handling
+
+The API returns errors in a consistent format:
+
+```typescript
+interface ErrorResponse {
+  error: string;
+}
+
+// Example errors:
+// 400: { error: "lat and lng query parameters are required" }
+// 401: { error: "Unauthorized" }
+// 404: { error: "Not found", endpoints: [...] }
+```
+
+Wrap calls in try/catch:
+
+```typescript
+try {
+  const { areas } = await fetchAreas(`/areas/nearby?lat=${lat}&lng=${lng}`);
+  return areas;
+} catch (error) {
+  console.error("Failed to fetch areas:", error.message);
+  return [];
+}
+```
+
+### Best Practices
+
+1. **Cache responses** — Area data changes infrequently. Cache by coordinates rounded to ~100m precision.
+
+2. **Use appropriate radius** — Start with 3000-5000m for urban areas. Larger radii in rural areas.
+
+3. **Limit results** — Use `limit` parameter to reduce payload size. Default limits are usually sufficient.
+
+4. **Handle empty results** — Some coordinates may not have nearby areas (ocean, wilderness).
+
+5. **Use `group=false` when needed** — By default, results are grouped by area with all postal codes collected. Set `group=false` to get individual (area, postal_code) rows if you need to filter by specific postal code.
+
+```typescript
+// Grouped (default): One entry per area, postal_codes is an array
+{ name: "Lauttasaari", postal_codes: ["00200", "00210"] }
+
+// Ungrouped: Separate entry for each postal code
+{ name: "Lauttasaari", postal_code: "00200" }
+{ name: "Lauttasaari", postal_code: "00210" }
+```
 
 ## Project Structure
 

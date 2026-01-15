@@ -27,6 +27,7 @@ export interface AreaResult {
   };
   postal_code: string | null;
   country_code: string;
+  country_name: string;
   parent_city: string | null;
   parent_municipality: string | null;
   distance_meters?: number;
@@ -44,6 +45,7 @@ export interface GroupedAreaResult {
   };
   postal_codes: string[];
   country_code: string;
+  country_name: string;
   parent_city: string | null;
   parent_municipality: string | null;
   distance_meters?: number;
@@ -61,6 +63,7 @@ interface AreaRow {
   polygon: string | null;
   postal_code: string | null;
   country_code: string;
+  country_name: string;
   parent_city: string | null;
   parent_municipality: string | null;
 }
@@ -79,6 +82,7 @@ function rowToResult(row: AreaRow, distance?: number): AreaResult {
     },
     postal_code: row.postal_code,
     country_code: row.country_code,
+    country_name: row.country_name,
     parent_city: row.parent_city,
     parent_municipality: row.parent_municipality,
     distance_meters: distance,
@@ -121,6 +125,7 @@ export function groupAreaResults(results: AreaResult[]): GroupedAreaResult[] {
         center: result.center,
         postal_codes: result.postal_code ? [result.postal_code] : [],
         country_code: result.country_code,
+        country_name: result.country_name,
         parent_city: result.parent_city,
         parent_municipality: result.parent_municipality,
         distance_meters: result.distance_meters,
@@ -144,22 +149,38 @@ export function findAreasNearby(
   lat: number,
   lng: number,
   radiusMeters: number,
-  limit: number = 50
+  limit: number = 50,
+  countryCode?: string
 ): AreaResult[] {
   // Calculate bounding box for R-tree query
   const bbox = boundingBoxFromRadius({ lat, lng }, radiusMeters);
 
-  // Query areas using R-tree
-  const rows = db
-    .query<AreaRow, [number, number, number, number]>(
-      `
-    SELECT a.* FROM areas a
-    INNER JOIN areas_rtree rt ON a.id = rt.id
-    WHERE rt.max_lat >= ? AND rt.min_lat <= ?
-      AND rt.max_lng >= ? AND rt.min_lng <= ?
-  `
-    )
-    .all(bbox.minLat, bbox.maxLat, bbox.minLng, bbox.maxLng);
+  // Query areas using R-tree, optionally filtered by country
+  let rows: AreaRow[];
+  if (countryCode) {
+    rows = db
+      .query<AreaRow, [number, number, number, number, string]>(
+        `
+      SELECT a.* FROM areas a
+      INNER JOIN areas_rtree rt ON a.id = rt.id
+      WHERE rt.max_lat >= ? AND rt.min_lat <= ?
+        AND rt.max_lng >= ? AND rt.min_lng <= ?
+        AND a.country_code = ?
+    `
+      )
+      .all(bbox.minLat, bbox.maxLat, bbox.minLng, bbox.maxLng, countryCode);
+  } else {
+    rows = db
+      .query<AreaRow, [number, number, number, number]>(
+        `
+      SELECT a.* FROM areas a
+      INNER JOIN areas_rtree rt ON a.id = rt.id
+      WHERE rt.max_lat >= ? AND rt.min_lat <= ?
+        AND rt.max_lng >= ? AND rt.min_lng <= ?
+    `
+      )
+      .all(bbox.minLat, bbox.maxLat, bbox.minLng, bbox.maxLng);
+  }
 
   // Calculate actual distances and filter
   const results: AreaResult[] = [];
@@ -254,8 +275,15 @@ export function findAreasContaining(
 export function searchAreasByName(
   db: Database,
   query: string,
-  limit: number = 20
+  limit: number = 20,
+  options?: {
+    countryCode?: string;
+    biasLat?: number;
+    biasLng?: number;
+  }
 ): AreaResult[] {
+  const { countryCode, biasLat, biasLng } = options ?? {};
+
   // Normalize query: lowercase and remove diacritics
   const lowerQuery = query.toLowerCase().trim();
   const normalizedQuery = normalizeText(query);
@@ -273,68 +301,165 @@ export function searchAreasByName(
   const normalizedPrefixPattern = `${normalizedQuery}%`;
   const normalizedContainsPattern = `%${normalizedQuery}%`;
 
-  // Build query based on whether we're also searching postal codes
+  // Build query based on whether we're also searching postal codes and filtering by country
   let rows: AreaRow[];
 
   if (isPostalCodeQuery) {
-    // Search both names and postal codes
-    rows = db
-      .query<
-        AreaRow,
-        [string, string, string, string, string, string, string, string, number]
-      >(
-        `
-      SELECT DISTINCT * FROM areas
-      WHERE LOWER(name) = ?
-         OR LOWER(name) LIKE ?
-         OR LOWER(name) LIKE ?
-         OR LOWER(name) LIKE ?
-         OR LOWER(name) LIKE ?
-         OR LOWER(names) LIKE ?
-         OR postal_code = ?
-         OR postal_code LIKE ?
-      LIMIT ?
-    `
-      )
-      .all(
-        exactPattern,
-        prefixPattern,
-        containsPattern,
-        normalizedPrefixPattern,
-        normalizedContainsPattern,
-        containsPattern,
-        lowerQuery.toUpperCase(), // Postal codes are often uppercase
-        `${lowerQuery.toUpperCase()}%`,
-        candidateLimit
-      );
+    if (countryCode) {
+      // Search both names and postal codes, filtered by country
+      rows = db
+        .query<
+          AreaRow,
+          [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            number
+          ]
+        >(
+          `
+        SELECT DISTINCT * FROM areas
+        WHERE country_code = ?
+          AND (LOWER(name) = ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(names) LIKE ?
+           OR postal_code = ?
+           OR postal_code LIKE ?)
+        LIMIT ?
+      `
+        )
+        .all(
+          countryCode,
+          exactPattern,
+          prefixPattern,
+          containsPattern,
+          normalizedPrefixPattern,
+          normalizedContainsPattern,
+          containsPattern,
+          lowerQuery.toUpperCase(), // Postal codes are often uppercase
+          `${lowerQuery.toUpperCase()}%`,
+          candidateLimit
+        );
+    } else {
+      // Search both names and postal codes
+      rows = db
+        .query<
+          AreaRow,
+          [
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            string,
+            number
+          ]
+        >(
+          `
+        SELECT DISTINCT * FROM areas
+        WHERE LOWER(name) = ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(names) LIKE ?
+           OR postal_code = ?
+           OR postal_code LIKE ?
+        LIMIT ?
+      `
+        )
+        .all(
+          exactPattern,
+          prefixPattern,
+          containsPattern,
+          normalizedPrefixPattern,
+          normalizedContainsPattern,
+          containsPattern,
+          lowerQuery.toUpperCase(), // Postal codes are often uppercase
+          `${lowerQuery.toUpperCase()}%`,
+          candidateLimit
+        );
+    }
   } else {
-    // Search names only
-    rows = db
-      .query<AreaRow, [string, string, string, string, string, string, number]>(
-        `
-      SELECT DISTINCT * FROM areas
-      WHERE LOWER(name) = ?
-         OR LOWER(name) LIKE ?
-         OR LOWER(name) LIKE ?
-         OR LOWER(name) LIKE ?
-         OR LOWER(name) LIKE ?
-         OR LOWER(names) LIKE ?
-      LIMIT ?
-    `
-      )
-      .all(
-        exactPattern,
-        prefixPattern,
-        containsPattern,
-        normalizedPrefixPattern,
-        normalizedContainsPattern,
-        containsPattern,
-        candidateLimit
-      );
+    if (countryCode) {
+      // Search names only, filtered by country
+      rows = db
+        .query<
+          AreaRow,
+          [string, string, string, string, string, string, string, number]
+        >(
+          `
+        SELECT DISTINCT * FROM areas
+        WHERE country_code = ?
+          AND (LOWER(name) = ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(names) LIKE ?)
+        LIMIT ?
+      `
+        )
+        .all(
+          countryCode,
+          exactPattern,
+          prefixPattern,
+          containsPattern,
+          normalizedPrefixPattern,
+          normalizedContainsPattern,
+          containsPattern,
+          candidateLimit
+        );
+    } else {
+      // Search names only
+      rows = db
+        .query<
+          AreaRow,
+          [string, string, string, string, string, string, number]
+        >(
+          `
+        SELECT DISTINCT * FROM areas
+        WHERE LOWER(name) = ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(name) LIKE ?
+           OR LOWER(names) LIKE ?
+        LIMIT ?
+      `
+        )
+        .all(
+          exactPattern,
+          prefixPattern,
+          containsPattern,
+          normalizedPrefixPattern,
+          normalizedContainsPattern,
+          containsPattern,
+          candidateLimit
+        );
+    }
   }
 
+  // Determine if we should calculate distance (bias point provided)
+  const hasBias = biasLat !== undefined && biasLng !== undefined;
+
   // Score each result using fuzzy matching
-  const scoredResults: Array<{ row: AreaRow; score: number }> = [];
+  const scoredResults: Array<{
+    row: AreaRow;
+    score: number;
+    distance?: number;
+  }> = [];
 
   for (const row of rows) {
     let bestScore = 0;
@@ -372,14 +497,38 @@ export function searchAreasByName(
     }
 
     if (bestScore > 0) {
-      scoredResults.push({ row, score: bestScore });
+      // Calculate distance from bias point if provided
+      let distance: number | undefined;
+      if (hasBias) {
+        distance = haversineDistance(
+          { lat: biasLat, lng: biasLng },
+          { lat: row.center_lat, lng: row.center_lng }
+        );
+      }
+      scoredResults.push({ row, score: bestScore, distance });
     }
   }
 
-  // Sort by score (highest first) and limit
-  scoredResults.sort((a, b) => b.score - a.score);
+  // Sort by score (highest first), with distance as secondary sort when bias is provided
+  scoredResults.sort((a, b) => {
+    // Primary sort by score (descending)
+    const scoreDiff = b.score - a.score;
+    if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
 
-  return scoredResults.slice(0, limit).map(({ row }) => rowToResult(row));
+    // Secondary sort by distance (ascending) when scores are similar and bias is provided
+    if (hasBias && a.distance !== undefined && b.distance !== undefined) {
+      return a.distance - b.distance;
+    }
+    return 0;
+  });
+
+  return scoredResults.slice(0, limit).map(({ row, distance }) => {
+    const result = rowToResult(row);
+    if (distance !== undefined) {
+      result.distance_meters = Math.round(distance);
+    }
+    return result;
+  });
 }
 
 /**
@@ -452,6 +601,7 @@ export interface AdjacentAreaResult {
   };
   postal_codes: string[];
   country_code: string;
+  country_name: string;
   parent_city: string | null;
   parent_municipality: string | null;
   distance_meters: number;
@@ -473,10 +623,11 @@ export interface AdjacentSearchResult {
  */
 function findCenterBySearch(
   db: Database,
-  query: string
+  query: string,
+  countryCode?: string
 ): GroupedAreaResult | null {
   // Use the fuzzy search to get candidates
-  const candidates = searchAreasByName(db, query, 10);
+  const candidates = searchAreasByName(db, query, 10, { countryCode });
 
   if (candidates.length === 0) return null;
 
@@ -490,9 +641,10 @@ function findCenterBySearch(
 function findCenterByLocation(
   db: Database,
   lat: number,
-  lng: number
+  lng: number,
+  countryCode?: string
 ): GroupedAreaResult | null {
-  const nearby = findAreasNearby(db, lat, lng, 2000, 5);
+  const nearby = findAreasNearby(db, lat, lng, 2000, 5, countryCode);
   if (nearby.length === 0) return null;
 
   const grouped = groupAreaResults(nearby);
@@ -510,17 +662,18 @@ export function findAdjacentAreas(
     lng?: number;
     radius?: number;
     limit?: number;
+    countryCode?: string;
   }
 ): AdjacentSearchResult | null {
-  const { query, lat, lng, radius = 5000, limit = 20 } = options;
+  const { query, lat, lng, radius = 5000, limit = 20, countryCode } = options;
 
   // Find the center area
   let center: GroupedAreaResult | null = null;
 
   if (query) {
-    center = findCenterBySearch(db, query);
+    center = findCenterBySearch(db, query, countryCode);
   } else if (lat !== undefined && lng !== undefined) {
-    center = findCenterByLocation(db, lat, lng);
+    center = findCenterByLocation(db, lat, lng, countryCode);
   }
 
   if (!center) {
@@ -530,7 +683,14 @@ export function findAdjacentAreas(
   // Find nearby areas around the center
   const centerLat = center.center.lat;
   const centerLng = center.center.lng;
-  const nearby = findAreasNearby(db, centerLat, centerLng, radius, limit * 3);
+  const nearby = findAreasNearby(
+    db,
+    centerLat,
+    centerLng,
+    radius,
+    limit * 3,
+    countryCode
+  );
   const grouped = groupAreaResults(nearby);
 
   // Filter out the center itself and calculate direction/level
@@ -586,6 +746,7 @@ export function findAdjacentAreas(
         center: area.center,
         postal_codes: area.postal_codes,
         country_code: area.country_code,
+        country_name: area.country_name,
         parent_city: area.parent_city,
         parent_municipality: area.parent_municipality,
         distance_meters: area.distance,

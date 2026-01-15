@@ -9,10 +9,17 @@
  */
 
 import { parseArgs } from "util";
-import { join } from "path";
 
-import { initializeDatabase, clearProcessingTables, clearFinalTables } from "../db/schema";
-import { downloadCountry, getSupportedCountries, checkOsmiumAvailable } from "./download";
+import {
+  initializeDatabase,
+  clearProcessingTables,
+  clearFinalTables,
+} from "../db/schema";
+import {
+  downloadCountry,
+  getSupportedCountries,
+  checkOsmiumAvailable,
+} from "./download";
 import { parseAndInsert } from "./parse";
 import { resolveAllHierarchies } from "./hierarchy";
 import { resolvePostalCodes, getPostalStats } from "./postal";
@@ -23,6 +30,10 @@ const { values } = parseArgs({
     country: {
       type: "string",
       short: "c",
+    },
+    "country-name": {
+      type: "string",
+      short: "n",
     },
     "data-dir": {
       type: "string",
@@ -66,19 +77,21 @@ Usage:
   bun run ingest/run.ts --country <country> [options]
 
 Options:
-  -c, --country <name>    Country to ingest (required)
-  -d, --data-dir <path>   Directory for PBF files (default: ./data)
-  --db-path <path>        Path to SQLite database (default: ./db/areas.db)
-  --skip-download         Skip downloading PBF (use existing file)
-  --skip-filter           Skip osmium filtering (use existing filtered file)
-  --clear-db              Clear database before ingesting
-  -l, --list              List supported countries
-  -h, --help              Show this help
+  -c, --country <name>      Country to ingest (required)
+  -n, --country-name <name> English name of the country (default: derived from country)
+  -d, --data-dir <path>     Directory for PBF files (default: ./data)
+  --db-path <path>          Path to SQLite database (default: ./db/areas.db)
+  --skip-download           Skip downloading PBF (use existing file)
+  --skip-filter             Skip osmium filtering (use existing filtered file)
+  --clear-db                Clear database before ingesting
+  -l, --list                List supported countries
+  -h, --help                Show this help
 
 Examples:
   bun run ingest/run.ts --country finland
   bun run ingest/run.ts -c sweden --skip-download
   bun run ingest/run.ts -c norway --clear-db
+  bun run ingest/run.ts -c united-kingdom --country-name "United Kingdom"
 `);
 }
 
@@ -103,6 +116,7 @@ async function main() {
   }
 
   const country = values.country;
+  const countryName = values["country-name"];
   const dataDir = values["data-dir"]!;
   const dbPath = values["db-path"]!;
 
@@ -110,6 +124,9 @@ async function main() {
   console.log("OSM Area Server - Ingestion Pipeline");
   console.log("=".repeat(60));
   console.log(`Country: ${country}`);
+  if (countryName) {
+    console.log(`Country name: ${countryName}`);
+  }
   console.log(`Data directory: ${dataDir}`);
   console.log(`Database: ${dbPath}`);
   console.log("");
@@ -136,6 +153,7 @@ async function main() {
   const downloadResult = await downloadCountry({
     dataDir,
     country,
+    countryName,
     skipDownload: values["skip-download"],
     skipFilter: values["skip-filter"],
   });
@@ -162,7 +180,11 @@ async function main() {
   console.log("\n[Step 3/4] Resolve administrative hierarchy");
   console.log("-".repeat(40));
 
-  const hierarchies = resolveAllHierarchies(db, downloadResult.countryCode);
+  const hierarchies = resolveAllHierarchies(
+    db,
+    downloadResult.countryCode,
+    downloadResult.countryName
+  );
 
   // Step 4: Resolve postal codes and create final areas
   console.log("\n[Step 4/4] Resolve postal codes and create final areas");
@@ -182,21 +204,35 @@ async function main() {
   console.log(`Areas with postal codes: ${stats.areasWithPostal}`);
   console.log(`Areas without postal codes: ${stats.areasWithoutPostal}`);
   console.log(`Unique postal codes: ${stats.uniquePostalCodes}`);
-  console.log(`Avg postal codes per area: ${stats.avgPostalCodesPerArea.toFixed(2)}`);
+  console.log(
+    `Avg postal codes per area: ${stats.avgPostalCodesPerArea.toFixed(2)}`
+  );
   console.log("");
 
   // Show sample data
   console.log("Sample areas:");
-  const samples = db.query<
-    { name: string; postal_code: string | null; parent_city: string | null; country_code: string },
-    []
-  >(
-    "SELECT name, postal_code, parent_city, country_code FROM areas ORDER BY RANDOM() LIMIT 5"
-  ).all();
+  const samples = db
+    .query<
+      {
+        name: string;
+        postal_code: string | null;
+        parent_city: string | null;
+        country_code: string;
+        country_name: string;
+      },
+      []
+    >(
+      "SELECT name, postal_code, parent_city, country_code, country_name FROM areas ORDER BY RANDOM() LIMIT 5"
+    )
+    .all();
 
   for (const sample of samples) {
     console.log(
-      `  - ${sample.name}${sample.postal_code ? ` (${sample.postal_code})` : ""} - ${sample.parent_city || "?"}, ${sample.country_code}`
+      `  - ${sample.name}${
+        sample.postal_code ? ` (${sample.postal_code})` : ""
+      } - ${sample.parent_city || "?"}, ${sample.country_name} (${
+        sample.country_code
+      })`
     );
   }
 
@@ -207,4 +243,3 @@ main().catch((error) => {
   console.error("Error:", error);
   process.exit(1);
 });
-

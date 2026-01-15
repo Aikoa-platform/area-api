@@ -29,6 +29,7 @@ interface AdminBoundaryRow {
 
 export interface HierarchyResult {
   country_code: string | null;
+  country_name: string | null;
   parent_city: string | null;
   parent_city_osm_id: number | null;
   parent_municipality: string | null;
@@ -147,7 +148,8 @@ export function resolveHierarchy(
   db: Database,
   lat: number,
   lng: number,
-  defaultCountryCode: string
+  defaultCountryCode: string,
+  defaultCountryName: string
 ): HierarchyResult {
   const boundaries = findContainingBoundaries(db, lat, lng);
 
@@ -206,6 +208,7 @@ export function resolveHierarchy(
 
   return {
     country_code: country_code || defaultCountryCode,
+    country_name: defaultCountryName,
     parent_city,
     parent_city_osm_id,
     parent_municipality,
@@ -217,7 +220,8 @@ export function resolveHierarchy(
  */
 export function resolveAllHierarchies(
   db: Database,
-  defaultCountryCode: string
+  defaultCountryCode: string,
+  defaultCountryName: string
 ): Map<number, HierarchyResult> {
   console.log("Resolving hierarchy for all areas...");
 
@@ -230,7 +234,8 @@ export function resolveAllHierarchies(
       db,
       area.center_lat,
       area.center_lng,
-      defaultCountryCode
+      defaultCountryCode,
+      defaultCountryName
     );
     results.set(area.id, hierarchy);
 

@@ -235,9 +235,9 @@ export function resolvePostalCodes(options: ResolvePostalOptions): void {
   const insertArea = db.prepare(`
     INSERT OR REPLACE INTO areas 
     (osm_id, osm_type, place_type, name, names, center_lat, center_lng, polygon,
-     postal_code, country_code, parent_city, parent_city_osm_id, parent_municipality,
+     postal_code, country_code, country_name, parent_city, parent_city_osm_id, parent_municipality,
      bbox_min_lat, bbox_min_lng, bbox_max_lat, bbox_max_lng)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertRtree = db.prepare(`
@@ -254,6 +254,7 @@ export function resolvePostalCodes(options: ResolvePostalOptions): void {
       const defaultName = names.default || Object.values(names)[0] || "Unknown";
       const hierarchy = hierarchies.get(area.id) || {
         country_code: null,
+        country_name: null,
         parent_city: null,
         parent_city_osm_id: null,
         parent_municipality: null,
@@ -293,6 +294,7 @@ export function resolvePostalCodes(options: ResolvePostalOptions): void {
           area.polygon,
           postalCode || null,
           hierarchy.country_code,
+          hierarchy.country_name,
           hierarchy.parent_city,
           hierarchy.parent_city_osm_id,
           hierarchy.parent_municipality,
@@ -304,10 +306,10 @@ export function resolvePostalCodes(options: ResolvePostalOptions): void {
 
         // Get the inserted ID for R-tree
         const result = db
-          .query<{ id: number }, [number, string, string | null]>(
+          .query<{ id: number }, [number, string, string | null, string | null]>(
             "SELECT id FROM areas WHERE osm_id = ? AND osm_type = ? AND (postal_code = ? OR (postal_code IS NULL AND ? IS NULL))"
           )
-          .get(area.osm_id, area.osm_type, postalCode || null);
+          .get(area.osm_id, area.osm_type, postalCode || null, postalCode || null);
 
         if (result && area.bbox_min_lat !== null) {
           insertRtree.run(

@@ -78,10 +78,50 @@ const COUNTRY_CODES: Record<string, string> = {
   "new-zealand": "NZ",
 };
 
+// Default English country names (can be overridden via --country-name)
+const COUNTRY_NAMES: Record<string, string> = {
+  finland: "Finland",
+  sweden: "Sweden",
+  norway: "Norway",
+  denmark: "Denmark",
+  estonia: "Estonia",
+  germany: "Germany",
+  france: "France",
+  netherlands: "Netherlands",
+  belgium: "Belgium",
+  austria: "Austria",
+  switzerland: "Switzerland",
+  poland: "Poland",
+  spain: "Spain",
+  portugal: "Portugal",
+  italy: "Italy",
+  "united-kingdom": "United Kingdom",
+  ireland: "Ireland",
+  "united-states": "United States",
+  canada: "Canada",
+  mexico: "Mexico",
+  japan: "Japan",
+  "south-korea": "South Korea",
+  australia: "Australia",
+  "new-zealand": "New Zealand",
+};
+
 export function getCountryCode(country: string): string {
   return (
     COUNTRY_CODES[country.toLowerCase()] || country.toUpperCase().slice(0, 2)
   );
+}
+
+export function getCountryName(country: string): string {
+  const lower = country.toLowerCase();
+  if (COUNTRY_NAMES[lower]) {
+    return COUNTRY_NAMES[lower];
+  }
+  // Capitalize first letter of each word as fallback
+  return country
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 export function getSupportedCountries(): string[] {
@@ -91,6 +131,7 @@ export function getSupportedCountries(): string[] {
 export interface DownloadOptions {
   dataDir: string;
   country: string;
+  countryName?: string; // Override the default English country name
   skipDownload?: boolean;
   skipFilter?: boolean;
 }
@@ -99,6 +140,7 @@ export interface DownloadResult {
   rawPbfPath: string;
   filteredPbfPath: string;
   countryCode: string;
+  countryName: string;
 }
 
 /**
@@ -107,7 +149,7 @@ export interface DownloadResult {
 export async function downloadCountry(
   options: DownloadOptions
 ): Promise<DownloadResult> {
-  const { dataDir, country, skipDownload, skipFilter } = options;
+  const { dataDir, country, countryName, skipDownload, skipFilter } = options;
   const countryLower = country.toLowerCase();
 
   const url = GEOFABRIK_URLS[countryLower];
@@ -155,6 +197,7 @@ export async function downloadCountry(
     rawPbfPath,
     filteredPbfPath,
     countryCode: getCountryCode(countryLower),
+    countryName: countryName || getCountryName(countryLower),
   };
 }
 

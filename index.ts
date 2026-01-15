@@ -139,6 +139,7 @@ const server = Bun.serve({
       const radius = parseFloat(url.searchParams.get("radius")) || 5000;
       const limit = parseInt(url.searchParams.get("limit"), 50);
       const group = url.searchParams.get("group") !== "false"; // Default to grouped
+      const countryCode = url.searchParams.get("country_code") ?? undefined;
 
       if (lat === null || lng === null) {
         return errorResponse("lat and lng query parameters are required");
@@ -158,7 +159,14 @@ const server = Bun.serve({
 
       // Get more raw results to ensure we have enough after grouping
       const rawLimit = group ? limit * 3 : limit;
-      const rawAreas = findAreasNearby(db, lat, lng, radius, rawLimit);
+      const rawAreas = findAreasNearby(
+        db,
+        lat,
+        lng,
+        radius,
+        rawLimit,
+        countryCode
+      );
 
       if (group) {
         const areas = groupAreaResults(rawAreas).slice(0, limit);
@@ -207,13 +215,29 @@ const server = Bun.serve({
       const query = url.searchParams.get("q");
       const limit = parseInt(url.searchParams.get("limit"), 20);
       const group = url.searchParams.get("group") !== "false"; // Default to grouped
+      const countryCode = url.searchParams.get("country_code") ?? undefined;
+      const biasLat = parseFloat(url.searchParams.get("lat"));
+      const biasLng = parseFloat(url.searchParams.get("lng"));
 
       if (!query || query.length < 2) {
         return errorResponse("q query parameter must be at least 2 characters");
       }
 
+      // Validate bias coordinates if provided
+      if (biasLat !== null && (biasLat < -90 || biasLat > 90)) {
+        return errorResponse("lat must be between -90 and 90");
+      }
+
+      if (biasLng !== null && (biasLng < -180 || biasLng > 180)) {
+        return errorResponse("lng must be between -180 and 180");
+      }
+
       const rawLimit = group ? limit * 3 : limit;
-      const rawAreas = searchAreasByName(db, query, rawLimit);
+      const rawAreas = searchAreasByName(db, query, rawLimit, {
+        countryCode,
+        biasLat: biasLat ?? undefined,
+        biasLng: biasLng ?? undefined,
+      });
 
       if (group) {
         const areas = groupAreaResults(rawAreas).slice(0, limit);
@@ -232,6 +256,7 @@ const server = Bun.serve({
       const lng = parseFloat(url.searchParams.get("lng"));
       const radius = parseFloat(url.searchParams.get("radius")) ?? 5000;
       const limit = parseInt(url.searchParams.get("limit"), 20);
+      const countryCode = url.searchParams.get("country_code") ?? undefined;
 
       if (!query && (lat === null || lng === null)) {
         return errorResponse(
@@ -257,6 +282,7 @@ const server = Bun.serve({
         lng: lng ?? undefined,
         radius,
         limit,
+        countryCode,
       });
 
       if (!result) {
