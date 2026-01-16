@@ -324,6 +324,7 @@ interface Area {
   center: { lat: number; lng: number };
   parent_city: string | null;
   country_code: string;
+  country_name: string;
   distance_meters: number;
 }
 

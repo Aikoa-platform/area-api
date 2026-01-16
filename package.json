@@ -5,10 +5,12 @@
   "private": true,
   "scripts": {
     "start": "bun run index.ts",
-    "dev": "bun --hot run index.ts",
+    "dev": "bun --watch run index.ts",
+    "mcp": "bun run mcp.ts",
     "ingest": "bun run ingest/run.ts",
     "ingest:finland": "bun run ingest/run.ts --country finland",
-    "ingest:help": "bun run ingest/run.ts --help"
+    "ingest:help": "bun run ingest/run.ts --help",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "^1.3.5",
@@ -18,6 +20,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.2",
     "osm-pbf-parser": "^2.3.0"
   }
 }

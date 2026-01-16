@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import type { Area, RawArea, PostalBoundary, AdminBoundary } from "../types";
 
 export function initializeDatabase(dbPath: string): Database {
   const db = new Database(dbPath, { create: true });
@@ -139,6 +140,19 @@ export function initializeDatabase(dbPath: string): Database {
     )
   `);
 
+  // Create FTS5 full-text search index for areas
+  // Uses trigram tokenizer for substring matching
+  db.run(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS areas_fts USING fts5(
+      area_id UNINDEXED,
+      name,
+      name_normalized,
+      postal_code,
+      all_names,
+      tokenize="trigram"
+    )
+  `);
+
   // Create indexes
   db.run(`CREATE INDEX IF NOT EXISTS idx_areas_name ON areas(name)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_areas_postal ON areas(postal_code)`);
@@ -166,71 +180,8 @@ export function clearProcessingTables(db: Database): void {
 export function clearFinalTables(db: Database): void {
   db.run("DELETE FROM areas");
   db.run("DELETE FROM areas_rtree");
+  db.run("DELETE FROM areas_fts");
 }
 
-export interface RawArea {
-  id: number;
-  osm_id: number;
-  osm_type: string;
-  place_type: string;
-  names: Record<string, string>;
-  center_lat: number;
-  center_lng: number;
-  polygon: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
-  bbox_min_lat: number | null;
-  bbox_min_lng: number | null;
-  bbox_max_lat: number | null;
-  bbox_max_lng: number | null;
-}
-
-export interface PostalBoundary {
-  id: number;
-  osm_id: number;
-  postal_code: string;
-  polygon: GeoJSON.Polygon | GeoJSON.MultiPolygon;
-  center_lat: number | null;
-  center_lng: number | null;
-  bbox_min_lat: number | null;
-  bbox_min_lng: number | null;
-  bbox_max_lat: number | null;
-  bbox_max_lng: number | null;
-}
-
-export interface AdminBoundary {
-  id: number;
-  osm_id: number;
-  admin_level: number;
-  name: string;
-  names: Record<string, string> | null;
-  place_type: string | null;
-  country_code: string | null;
-  polygon: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
-  center_lat: number | null;
-  center_lng: number | null;
-  bbox_min_lat: number | null;
-  bbox_min_lng: number | null;
-  bbox_max_lat: number | null;
-  bbox_max_lng: number | null;
-}
-
-export interface Area {
-  id: number;
-  osm_id: number;
-  osm_type: string;
-  place_type: string;
-  name: string;
-  names: Record<string, string>;
-  center_lat: number;
-  center_lng: number;
-  polygon: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
-  postal_code: string | null;
-  country_code: string;
-  country_name: string;
-  parent_city: string | null;
-  parent_city_osm_id: number | null;
-  parent_municipality: string | null;
-  bbox_min_lat: number | null;
-  bbox_min_lng: number | null;
-  bbox_max_lat: number | null;
-  bbox_max_lng: number | null;
-}
+// Re-export types for backward compatibility
+export type { Area, RawArea, PostalBoundary, AdminBoundary };

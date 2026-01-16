@@ -10,6 +10,7 @@
 
 import { parseArgs } from "util";
 
+import { constants, Database } from "bun:sqlite";
 import {
   initializeDatabase,
   clearProcessingTables,
@@ -95,6 +96,13 @@ Examples:
 `);
 }
 
+const SQLITE_PATH = process.env.SQLITE_PATH;
+
+if (SQLITE_PATH) {
+  console.log(`Using custom SQLite at ${SQLITE_PATH}`);
+  Database.setCustomSQLite(SQLITE_PATH);
+}
+
 async function main() {
   if (values.help) {
     printHelp();
@@ -119,6 +127,9 @@ async function main() {
   const countryName = values["country-name"];
   const dataDir = values["data-dir"]!;
   const dbPath = values["db-path"]!;
+
+  const db = initializeDatabase(dbPath);
+  db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
 
   console.log("=".repeat(60));
   console.log("OSM Area Server - Ingestion Pipeline");
@@ -161,8 +172,6 @@ async function main() {
   // Step 2: Initialize database and parse
   console.log("\n[Step 2/4] Parse PBF and insert into database");
   console.log("-".repeat(40));
-
-  const db = initializeDatabase(dbPath);
 
   if (values["clear-db"]) {
     console.log("Clearing database...");

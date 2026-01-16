@@ -16,7 +16,7 @@
  *   GET /health
  */
 
-import { Database } from "bun:sqlite";
+import { constants, Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import {
   findAreasNearby,
@@ -33,17 +33,22 @@ import type { Server } from "bun";
 const DB_PATH = process.env.DB_PATH || "./db/areas.db";
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const API_KEY = process.env.API_KEY;
+const SQLITE_PATH = process.env.SQLITE_PATH;
 
 if (!API_KEY) {
   console.warn("WARNING: API_KEY not set. Auth disabled for localhost only.");
 }
 
 // Initialize database
-let db: Database;
+let db: Database | undefined;
+
+if (SQLITE_PATH) {
+  console.log(`Using custom SQLite at ${SQLITE_PATH}`);
+  Database.setCustomSQLite(SQLITE_PATH);
+}
 
 if (existsSync(DB_PATH)) {
   db = new Database(DB_PATH, { readonly: true });
-  db.run("PRAGMA cache_size = -64000"); // 64MB cache
   console.log(`Loaded database from ${DB_PATH}`);
 } else {
   console.log(`Database not found at ${DB_PATH}`);
@@ -53,6 +58,12 @@ if (existsSync(DB_PATH)) {
   console.log("Starting with empty database...");
   db = initializeDatabase(DB_PATH);
 }
+
+db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+
+db.run("PRAGMA cache_size = -64000"); // 64MB cache
+db.run("PRAGMA journal_mode = WAL");
+db.run("PRAGMA synchronous = NORMAL");
 
 // No CORS headers - server-to-server only
 const baseHeaders = {

@@ -6,6 +6,7 @@
 
 import { Database } from "bun:sqlite";
 import { polygonsIntersect, pointInPolygon } from "../lib/geo";
+import { normalizeText } from "../lib/search";
 import { type HierarchyResult } from "./hierarchy";
 
 interface RawAreaRow {
@@ -245,6 +246,11 @@ export function resolvePostalCodes(options: ResolvePostalOptions): void {
     VALUES (?, ?, ?, ?, ?)
   `);
 
+  const insertFts = db.prepare(`
+    INSERT INTO areas_fts (area_id, name, name_normalized, postal_code, all_names)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
   let totalInserted = 0;
   let areasWithoutPostal = 0;
 
@@ -306,10 +312,18 @@ export function resolvePostalCodes(options: ResolvePostalOptions): void {
 
         // Get the inserted ID for R-tree
         const result = db
-          .query<{ id: number }, [number, string, string | null, string | null]>(
+          .query<
+            { id: number },
+            [number, string, string | null, string | null]
+          >(
             "SELECT id FROM areas WHERE osm_id = ? AND osm_type = ? AND (postal_code = ? OR (postal_code IS NULL AND ? IS NULL))"
           )
-          .get(area.osm_id, area.osm_type, postalCode || null, postalCode || null);
+          .get(
+            area.osm_id,
+            area.osm_type,
+            postalCode || null,
+            postalCode || null
+          );
 
         if (result && area.bbox_min_lat !== null) {
           insertRtree.run(
@@ -327,6 +341,21 @@ export function resolvePostalCodes(options: ResolvePostalOptions): void {
             area.center_lat,
             area.center_lng,
             area.center_lng
+          );
+        }
+
+        // Insert into FTS5 index for full-text search
+        if (result) {
+          // Flatten all name variants into a single searchable string
+          const allNamesArray = Object.values(names);
+          const allNamesStr = allNamesArray.join(" ");
+
+          insertFts.run(
+            result.id,
+            defaultName,
+            normalizeText(defaultName),
+            postalCode || null,
+            allNamesStr
           );
         }
 

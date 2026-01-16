@@ -10,46 +10,14 @@ import {
   calculateBearing,
   roundBearingToSector,
   bearingToCardinal,
-  normalizeText,
-  fuzzyMatchScore,
 } from "../lib/geo";
-
-export interface AreaResult {
-  id: number;
-  osm_id: number;
-  osm_type: string;
-  place_type: string;
-  name: string;
-  names: Record<string, string>;
-  center: {
-    lat: number;
-    lng: number;
-  };
-  postal_code: string | null;
-  country_code: string;
-  country_name: string;
-  parent_city: string | null;
-  parent_municipality: string | null;
-  distance_meters?: number;
-}
-
-export interface GroupedAreaResult {
-  osm_id: number;
-  osm_type: string;
-  place_type: string;
-  name: string;
-  names: Record<string, string>;
-  center: {
-    lat: number;
-    lng: number;
-  };
-  postal_codes: string[];
-  country_code: string;
-  country_name: string;
-  parent_city: string | null;
-  parent_municipality: string | null;
-  distance_meters?: number;
-}
+import { SearchService } from "../lib/search";
+import type {
+  AreaResult,
+  GroupedAreaResult,
+  AdjacentAreaResult,
+  AdjacentSearchResult,
+} from "../types";
 
 interface AreaRow {
   id: number;
@@ -269,8 +237,12 @@ export function findAreasContaining(
 
 /**
  * Search areas by name or postal code with fuzzy matching.
- * Uses multiple strategies: exact, prefix, contains, and Levenshtein distance.
- * All matching is case-insensitive.
+ *
+ * Delegates to SearchService for:
+ * - FTS5 trigram-based candidate retrieval (when available)
+ * - Jaro-Winkler and n-gram fuzzy scoring
+ * - Combined name + postal code query support
+ * - Proximity-weighted ranking
  */
 export function searchAreasByName(
   db: Database,
@@ -282,253 +254,32 @@ export function searchAreasByName(
     biasLng?: number;
   }
 ): AreaResult[] {
-  const { countryCode, biasLat, biasLng } = options ?? {};
-
-  // Normalize query: lowercase and remove diacritics
-  const lowerQuery = query.toLowerCase().trim();
-  const normalizedQuery = normalizeText(query);
-
-  // Get more candidates than needed for fuzzy filtering
-  const candidateLimit = Math.max(limit * 5, 100);
-
-  // Check if query looks like a postal code (numeric or alphanumeric)
-  const isPostalCodeQuery = /^[\d\w]{2,10}$/i.test(lowerQuery);
-
-  // Search patterns (all lowercase for case-insensitive matching)
-  const exactPattern = lowerQuery;
-  const prefixPattern = `${lowerQuery}%`;
-  const containsPattern = `%${lowerQuery}%`;
-  const normalizedPrefixPattern = `${normalizedQuery}%`;
-  const normalizedContainsPattern = `%${normalizedQuery}%`;
-
-  // Build query based on whether we're also searching postal codes and filtering by country
-  let rows: AreaRow[];
-
-  if (isPostalCodeQuery) {
-    if (countryCode) {
-      // Search both names and postal codes, filtered by country
-      rows = db
-        .query<
-          AreaRow,
-          [
-            string,
-            string,
-            string,
-            string,
-            string,
-            string,
-            string,
-            string,
-            string,
-            number
-          ]
-        >(
-          `
-        SELECT DISTINCT * FROM areas
-        WHERE country_code = ?
-          AND (LOWER(name) = ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(names) LIKE ?
-           OR postal_code = ?
-           OR postal_code LIKE ?)
-        LIMIT ?
-      `
-        )
-        .all(
-          countryCode,
-          exactPattern,
-          prefixPattern,
-          containsPattern,
-          normalizedPrefixPattern,
-          normalizedContainsPattern,
-          containsPattern,
-          lowerQuery.toUpperCase(), // Postal codes are often uppercase
-          `${lowerQuery.toUpperCase()}%`,
-          candidateLimit
-        );
-    } else {
-      // Search both names and postal codes
-      rows = db
-        .query<
-          AreaRow,
-          [
-            string,
-            string,
-            string,
-            string,
-            string,
-            string,
-            string,
-            string,
-            number
-          ]
-        >(
-          `
-        SELECT DISTINCT * FROM areas
-        WHERE LOWER(name) = ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(names) LIKE ?
-           OR postal_code = ?
-           OR postal_code LIKE ?
-        LIMIT ?
-      `
-        )
-        .all(
-          exactPattern,
-          prefixPattern,
-          containsPattern,
-          normalizedPrefixPattern,
-          normalizedContainsPattern,
-          containsPattern,
-          lowerQuery.toUpperCase(), // Postal codes are often uppercase
-          `${lowerQuery.toUpperCase()}%`,
-          candidateLimit
-        );
-    }
-  } else {
-    if (countryCode) {
-      // Search names only, filtered by country
-      rows = db
-        .query<
-          AreaRow,
-          [string, string, string, string, string, string, string, number]
-        >(
-          `
-        SELECT DISTINCT * FROM areas
-        WHERE country_code = ?
-          AND (LOWER(name) = ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(names) LIKE ?)
-        LIMIT ?
-      `
-        )
-        .all(
-          countryCode,
-          exactPattern,
-          prefixPattern,
-          containsPattern,
-          normalizedPrefixPattern,
-          normalizedContainsPattern,
-          containsPattern,
-          candidateLimit
-        );
-    } else {
-      // Search names only
-      rows = db
-        .query<
-          AreaRow,
-          [string, string, string, string, string, string, number]
-        >(
-          `
-        SELECT DISTINCT * FROM areas
-        WHERE LOWER(name) = ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(name) LIKE ?
-           OR LOWER(names) LIKE ?
-        LIMIT ?
-      `
-        )
-        .all(
-          exactPattern,
-          prefixPattern,
-          containsPattern,
-          normalizedPrefixPattern,
-          normalizedContainsPattern,
-          containsPattern,
-          candidateLimit
-        );
-    }
-  }
-
-  // Determine if we should calculate distance (bias point provided)
-  const hasBias = biasLat !== undefined && biasLng !== undefined;
-
-  // Score each result using fuzzy matching
-  const scoredResults: Array<{
-    row: AreaRow;
-    score: number;
-    distance?: number;
-  }> = [];
-
-  for (const row of rows) {
-    let bestScore = 0;
-
-    // Check postal code match (highest priority for postal code queries)
-    if (row.postal_code) {
-      const postalLower = row.postal_code.toLowerCase();
-      if (postalLower === lowerQuery) {
-        bestScore = 1.0; // Exact postal code match
-      } else if (postalLower.startsWith(lowerQuery)) {
-        bestScore = 0.95; // Postal code prefix match
-      }
-    }
-
-    // Check main name (case-insensitive)
-    const nameScore = fuzzyMatchScore(lowerQuery, row.name.toLowerCase());
-    if (nameScore > bestScore) {
-      bestScore = nameScore;
-    }
-
-    // Also check translated names
-    try {
-      const names = JSON.parse(row.names) as Record<string, string>;
-      for (const translatedName of Object.values(names)) {
-        const translatedScore = fuzzyMatchScore(
-          lowerQuery,
-          translatedName.toLowerCase()
-        );
-        if (translatedScore > bestScore) {
-          bestScore = translatedScore;
-        }
-      }
-    } catch {
-      // Ignore JSON parse errors
-    }
-
-    if (bestScore > 0) {
-      // Calculate distance from bias point if provided
-      let distance: number | undefined;
-      if (hasBias) {
-        distance = haversineDistance(
-          { lat: biasLat, lng: biasLng },
-          { lat: row.center_lat, lng: row.center_lng }
-        );
-      }
-      scoredResults.push({ row, score: bestScore, distance });
-    }
-  }
-
-  // Sort by score (highest first), with distance as secondary sort when bias is provided
-  scoredResults.sort((a, b) => {
-    // Primary sort by score (descending)
-    const scoreDiff = b.score - a.score;
-    if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
-
-    // Secondary sort by distance (ascending) when scores are similar and bias is provided
-    if (hasBias && a.distance !== undefined && b.distance !== undefined) {
-      return a.distance - b.distance;
-    }
-    return 0;
+  const searchService = SearchService.getInstance(db);
+  const results = searchService.search(query, {
+    limit,
+    countryCode: options?.countryCode,
+    biasLat: options?.biasLat,
+    biasLng: options?.biasLng,
   });
 
-  return scoredResults.slice(0, limit).map(({ row, distance }) => {
-    const result = rowToResult(row);
-    if (distance !== undefined) {
-      result.distance_meters = Math.round(distance);
-    }
-    return result;
-  });
+  // Convert SearchResult to AreaResult (remove score field)
+  return results.map(
+    (r): AreaResult => ({
+      id: r.id,
+      osm_id: r.osm_id,
+      osm_type: r.osm_type,
+      place_type: r.place_type,
+      name: r.name,
+      names: r.names,
+      center: r.center,
+      postal_code: r.postal_code,
+      country_code: r.country_code,
+      country_name: r.country_name,
+      parent_city: r.parent_city,
+      parent_municipality: r.parent_municipality,
+      distance_meters: r.distance_meters,
+    })
+  );
 }
 
 /**
@@ -584,38 +335,6 @@ export function getStats(db: Database): {
     postalCodesCount,
     citiesCount,
   };
-}
-
-/**
- * Adjacent area result with direction and level information.
- */
-export interface AdjacentAreaResult {
-  osm_id: number;
-  osm_type: string;
-  place_type: string;
-  name: string;
-  names: Record<string, string>;
-  center: {
-    lat: number;
-    lng: number;
-  };
-  postal_codes: string[];
-  country_code: string;
-  country_name: string;
-  parent_city: string | null;
-  parent_municipality: string | null;
-  distance_meters: number;
-  /** Direction from center in degrees (0=N, 90=E, 180=S, 270=W), rounded to 45° */
-  degrees: number;
-  /** Cardinal direction (N, NE, E, SE, S, SW, W, NW) */
-  direction: string;
-  /** Level/ring from center (0=center, 1=adjacent, 2=next ring, etc.) */
-  level: number;
-}
-
-export interface AdjacentSearchResult {
-  center: GroupedAreaResult;
-  adjacent: AdjacentAreaResult[];
 }
 
 /**

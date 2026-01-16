@@ -3,17 +3,7 @@
  * Implements haversine distance, point-in-polygon, and polygon intersection.
  */
 
-export interface Point {
-  lat: number;
-  lng: number;
-}
-
-export interface BBox {
-  minLat: number;
-  maxLat: number;
-  minLng: number;
-  maxLng: number;
-}
+import type { Point, BBox } from "../types";
 
 const EARTH_RADIUS_METERS = 6371008.8;
 
