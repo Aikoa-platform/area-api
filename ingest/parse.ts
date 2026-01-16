@@ -22,18 +22,15 @@ export async function parseAndInsert(options: ParseOptions): Promise<void> {
   const result = await parsePBF(filteredPbfPath);
 
   console.log("\nInserting into database...");
-  await insertRawAreas(db, result);
-  await insertPostalBoundaries(db, result);
-  await insertAdminBoundaries(db, result, defaultCountryCode);
-  await insertAddressPoints(db, result);
+  insertRawAreas(db, result);
+  insertPostalBoundaries(db, result);
+  insertAdminBoundaries(db, result, defaultCountryCode);
+  insertAddressPoints(db, result);
 
   console.log("Parse and insert complete.");
 }
 
-async function insertRawAreas(
-  db: Database,
-  result: ParseResult
-): Promise<void> {
+function insertRawAreas(db: Database, result: ParseResult): void {
   console.log(`  Inserting ${result.places.length} raw areas...`);
 
   const insert = db.prepare(`
@@ -78,10 +75,7 @@ async function insertRawAreas(
   console.log(`    Inserted ${result.places.length} raw areas`);
 }
 
-async function insertPostalBoundaries(
-  db: Database,
-  result: ParseResult
-): Promise<void> {
+function insertPostalBoundaries(db: Database, result: ParseResult): void {
   console.log(
     `  Inserting ${result.postalBoundaries.length} postal boundaries...`
   );
@@ -142,10 +136,7 @@ async function insertPostalBoundaries(
   );
 }
 
-async function insertAddressPoints(
-  db: Database,
-  result: ParseResult
-): Promise<void> {
+function insertAddressPoints(db: Database, result: ParseResult): void {
   console.log(`  Inserting ${result.addressPoints.length} address points...`);
 
   const insertPoint = db.prepare(`
@@ -171,10 +162,17 @@ async function insertAddressPoints(
         .get(point.osm_id);
 
       if (row) {
+        // R-tree entry might already exist if osm_id was duplicated, use INSERT OR IGNORE
         try {
           insertRtree.run(row.id, point.lat, point.lat, point.lng, point.lng);
-        } catch {
-          // R-tree entry might already exist, ignore
+        } catch (error) {
+          // Only ignore "UNIQUE constraint failed" errors (duplicate entries)
+          const message = String(error);
+          if (!message.includes("UNIQUE constraint")) {
+            console.warn(
+              `  Warning: R-tree insert failed for address point ${point.osm_id}: ${message}`
+            );
+          }
         }
         inserted++;
       }
@@ -186,11 +184,11 @@ async function insertAddressPoints(
   console.log(`    Inserted ${count} address points`);
 }
 
-async function insertAdminBoundaries(
+function insertAdminBoundaries(
   db: Database,
   result: ParseResult,
   defaultCountryCode: string
-): Promise<void> {
+): void {
   console.log(
     `  Inserting ${result.adminBoundaries.length} admin boundaries...`
   );

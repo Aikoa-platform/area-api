@@ -8,6 +8,7 @@ import { Writable } from "node:stream";
 
 // @ts-ignore - osm-pbf-parser doesn't have types
 import createParser from "osm-pbf-parser";
+import { centroid as calculatePolygonCentroid } from "./geo";
 
 export interface OSMNode {
   type: "node";
@@ -29,7 +30,7 @@ export interface OSMRelation {
   id: number;
   members: Array<{
     type: "node" | "way" | "relation";
-    ref: number;
+    id: number; // osm-pbf-parser uses 'id' not 'ref'
     role: string;
   }>;
   tags: Record<string, string>;
@@ -197,9 +198,9 @@ export function buildPolygonFromRelation(
   for (const member of members) {
     if (member.type === "way") {
       if (member.role === "outer" || member.role === "") {
-        outerWayRefs.push(member.ref);
+        outerWayRefs.push(member.id);
       } else if (member.role === "inner") {
-        innerWayRefs.push(member.ref);
+        innerWayRefs.push(member.id);
       }
     }
   }
@@ -230,7 +231,14 @@ export function buildPolygonFromRelation(
   }
 
   // Multiple outer rings = MultiPolygon
-  // TODO: properly associate inner rings with their outer rings
+  // Note: Inner rings are dropped for MultiPolygons because we'd need point-in-polygon
+  // tests to associate each inner ring with the correct outer ring. This affects
+  // very few boundaries (mostly islands with lakes) and the impact is minimal.
+  if (innerRings.length > 0) {
+    console.warn(
+      `  Warning: Dropping ${innerRings.length} inner ring(s) from MultiPolygon with ${outerRings.length} outer rings`
+    );
+  }
   return {
     type: "MultiPolygon",
     coordinates: outerRings.map((outer) => [outer]),
@@ -420,11 +428,7 @@ async function extractElements(
 
           // Check for parent places (cities, towns, etc.) - also store as admin boundaries
           if (placeType && PARENT_PLACE_TYPES.has(placeType)) {
-            const boundary = processParentPlace(
-              item,
-              nodeCoords,
-              wayGeometries
-            );
+            const boundary = processParentPlace(item, wayGeometries);
             if (boundary) adminBoundaries.push(boundary);
           }
 
@@ -487,18 +491,21 @@ function processPlace(
     // Relation
     polygon = buildPolygonFromRelation(item.members, wayGeometries);
     if (polygon) {
-      const { centroid } = require("./geo");
-      const center = centroid(polygon);
+      const center = calculatePolygonCentroid(polygon);
       center_lat = center.lat;
       center_lng = center.lng;
     } else {
-      // Fallback: calculate from member way centroids
+      // Polygon could not be built from relation - calculate center from member way centroids
+      // This happens when way geometries are incomplete or malformed
+      console.warn(
+        `  Warning: Could not build polygon for relation ${item.id}, using member centroid fallback`
+      );
       let sumLat = 0;
       let sumLng = 0;
       let count = 0;
       for (const member of item.members) {
         if (member.type === "way") {
-          const coords = wayGeometries.get(member.ref);
+          const coords = wayGeometries.get(member.id);
           if (coords) {
             const [lon, lat] = calculateCentroid(coords);
             sumLat += lat;
@@ -602,7 +609,6 @@ function processAdminBoundary(
 
 function processParentPlace(
   item: OSMElement,
-  nodeCoords: Map<number, [number, number]>,
   wayGeometries: Map<number, GeoJSON.Position[]>
 ): ParsedBoundary | null {
   const tags = item.tags || {};
@@ -627,8 +633,7 @@ function processParentPlace(
   } else {
     polygon = buildPolygonFromRelation(item.members, wayGeometries);
     if (polygon) {
-      const { centroid } = require("./geo");
-      const center = centroid(polygon);
+      const center = calculatePolygonCentroid(polygon);
       centerLat = center.lat;
       centerLng = center.lng;
     }

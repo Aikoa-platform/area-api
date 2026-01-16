@@ -105,11 +105,22 @@ function findPostalCodesFromAddressPoints(
   return Array.from(postalCodes);
 }
 
+/** Method used to find postal codes */
+type PostalCodeMethod = "postal_boundary" | "address_points" | "none";
+
+interface PostalCodeResult {
+  codes: string[];
+  method: PostalCodeMethod;
+}
+
 /**
  * Find postal codes that intersect with an area's polygon or bbox.
  * First tries postal boundaries, then falls back to address point sampling.
  */
-function findIntersectingPostalCodes(db: Database, area: RawAreaRow): string[] {
+function findIntersectingPostalCodes(
+  db: Database,
+  area: RawAreaRow
+): PostalCodeResult {
   // Determine the area's bounds for R-tree query
   let minLat: number, maxLat: number, minLng: number, maxLng: number;
 
@@ -158,7 +169,7 @@ function findIntersectingPostalCodes(db: Database, area: RawAreaRow): string[] {
       }
 
       if (postalCodes.length > 0) {
-        return postalCodes;
+        return { codes: postalCodes, method: "postal_boundary" };
       }
     } else {
       // No polygon - check if center point is in any postal boundary
@@ -173,14 +184,18 @@ function findIntersectingPostalCodes(db: Database, area: RawAreaRow): string[] {
             postalPolygon
           )
         ) {
-          return [postal.postal_code];
+          return { codes: [postal.postal_code], method: "postal_boundary" };
         }
       }
     }
   }
 
   // Fall back to address point sampling
-  return findPostalCodesFromAddressPoints(db, area);
+  const codes = findPostalCodesFromAddressPoints(db, area);
+  return {
+    codes,
+    method: codes.length > 0 ? "address_points" : "none",
+  };
 }
 
 /**
@@ -253,6 +268,12 @@ export function resolvePostalCodes(options: ResolvePostalOptions): void {
 
   let totalInserted = 0;
   let areasWithoutPostal = 0;
+  let postalMethodStats = {
+    postal_boundary: 0,
+    address_points: 0,
+    nearest_fallback: 0,
+    none: 0,
+  };
 
   const insertMany = db.transaction(() => {
     for (const area of areas) {
@@ -267,7 +288,9 @@ export function resolvePostalCodes(options: ResolvePostalOptions): void {
       };
 
       // Find intersecting postal codes
-      let postalCodes = findIntersectingPostalCodes(db, area);
+      const postalResult = findIntersectingPostalCodes(db, area);
+      let postalCodes = postalResult.codes;
+      let method = postalResult.method;
 
       // If no postal codes found, try finding the nearest one
       if (postalCodes.length === 0) {
@@ -278,13 +301,23 @@ export function resolvePostalCodes(options: ResolvePostalOptions): void {
         );
         if (nearest) {
           postalCodes = [nearest];
+          method = "address_points"; // nearest is a subset of address points method
+          postalMethodStats.nearest_fallback++;
         }
+      }
+
+      // Track method used
+      if (method === "postal_boundary") {
+        postalMethodStats.postal_boundary++;
+      } else if (method === "address_points" && postalCodes.length > 0) {
+        postalMethodStats.address_points++;
       }
 
       // If still no postal codes, create one row with null postal
       if (postalCodes.length === 0) {
         postalCodes = [""]; // Empty string to represent no postal code
         areasWithoutPostal++;
+        postalMethodStats.none++;
       }
 
       // Create a row for each (area, postal_code) combination
@@ -370,6 +403,19 @@ export function resolvePostalCodes(options: ResolvePostalOptions): void {
     `  Created ${totalInserted} area rows from ${areas.length} raw areas`
   );
   console.log(`  Areas without postal code: ${areasWithoutPostal}`);
+  console.log(`  Postal code sources:`);
+  console.log(
+    `    - From postal boundaries: ${postalMethodStats.postal_boundary}`
+  );
+  console.log(`    - From address points: ${postalMethodStats.address_points}`);
+  if (postalMethodStats.nearest_fallback > 0) {
+    console.log(
+      `    - Using nearest point fallback: ${postalMethodStats.nearest_fallback}`
+    );
+  }
+  if (postalMethodStats.none > 0) {
+    console.log(`    - No postal code found: ${postalMethodStats.none}`);
+  }
 }
 
 /**

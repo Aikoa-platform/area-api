@@ -107,21 +107,32 @@ const COUNTRY_NAMES: Record<string, string> = {
 };
 
 export function getCountryCode(country: string): string {
-  return (
-    COUNTRY_CODES[country.toLowerCase()] || country.toUpperCase().slice(0, 2)
-  );
+  const code = COUNTRY_CODES[country.toLowerCase()];
+  if (!code) {
+    const derived = country.toUpperCase().slice(0, 2);
+    console.warn(
+      `  Warning: Unknown country '${country}', using derived code '${derived}'`
+    );
+    return derived;
+  }
+  return code;
 }
 
 export function getCountryName(country: string): string {
   const lower = country.toLowerCase();
-  if (COUNTRY_NAMES[lower]) {
-    return COUNTRY_NAMES[lower];
+  const name = COUNTRY_NAMES[lower];
+  if (name) {
+    return name;
   }
   // Capitalize first letter of each word as fallback
-  return country
+  const derived = country
     .split("-")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+  console.warn(
+    `  Warning: Unknown country '${country}', using derived name '${derived}'`
+  );
+  return derived;
 }
 
 export function getSupportedCountries(): string[] {
@@ -229,26 +240,62 @@ async function filterWithOsmium(
   // - place=city,town,municipality,village (parent cities)
   // - addr:postcode (for sampling postal codes from address nodes)
   //
-  // Note: We run two separate filters because osmium needs each expression as a separate argument
-  // First filter: places and boundaries
-  // Second filter: address points (appended)
+  // We use a two-step process to ensure polygon geometries are complete:
+  // 1. Filter for elements with matching tags
+  // 2. Use getid -r to extract those elements with all referenced nodes/ways
+  //    (osmium tags-filter -R doesn't properly include nodes for way members)
 
   try {
-    // First, filter places and boundaries with complete strategy to include
-    // way members needed for building relation geometries
-    await $`osmium tags-filter ${inputPath} nwr/place=suburb,city_district,borough,neighbourhood,quarter nwr/boundary=postal_code nwr/boundary=administrative nwr/place=city,town,municipality,village -o ${outputPath} --overwrite -R`;
-
-    // Then, extract address points to a separate file and merge
+    const tagsPath = outputPath.replace(".osm.pbf", "-tags.osm.pbf");
+    const refsPath = outputPath.replace(".osm.pbf", "-refs.osm.pbf");
     const addrPath = outputPath.replace(".osm.pbf", "-addr.osm.pbf");
+    const mergedPath = outputPath.replace(".osm.pbf", "-merged.osm.pbf");
+
+    // Step 1: Filter for places and boundaries (just IDs, no referenced objects)
+    console.log("  Step 1/4: Filtering for places and boundaries...");
+    await $`osmium tags-filter ${inputPath} nwr/place=suburb,city_district,borough,neighbourhood,quarter nwr/boundary=postal_code nwr/boundary=administrative nwr/place=city,town,municipality,village -o ${tagsPath} --overwrite`;
+
+    // Step 2: Extract those elements with all referenced nodes/ways for complete polygons
+    // This ensures relation polygons can be built (relations → ways → nodes)
+    // Note: getid returns exit code 1 if some objects aren't found (e.g., referenced
+    // objects outside the country extract like cross-border boundaries)
+    console.log(
+      "  Step 2/4: Extracting with complete references for polygons..."
+    );
+    // Use --verbose to get count of missing objects, but suppress stdout/stderr
+    const getidResult =
+      await $`osmium getid -r -I ${tagsPath} ${inputPath} -o ${refsPath} --overwrite --verbose 2>&1`
+        .quiet()
+        .nothrow();
+
+    if (!existsSync(refsPath)) {
+      throw new Error(
+        `osmium getid failed to produce output: ${getidResult.text()}`
+      );
+    }
+
+    // Log if some objects weren't found (expected for cross-border boundaries)
+    if (getidResult.exitCode !== 0) {
+      const output = getidResult.text();
+      const notFoundMatch = output.match(/Did not find (\d+) object/);
+      if (notFoundMatch) {
+        console.log(
+          `    Note: ${notFoundMatch[1]} referenced objects not found (cross-border boundaries)`
+        );
+      }
+    }
+
+    // Step 3: Extract address points to a separate file
+    console.log("  Step 3/4: Extracting address points...");
     await $`osmium tags-filter ${inputPath} n/addr:postcode -o ${addrPath} --overwrite`;
 
-    // Merge the two files
-    const mergedPath = outputPath.replace(".osm.pbf", "-merged.osm.pbf");
-    await $`osmium merge ${outputPath} ${addrPath} -o ${mergedPath} --overwrite`;
+    // Step 4: Merge the files
+    console.log("  Step 4/4: Merging files...");
+    await $`osmium merge ${refsPath} ${addrPath} -o ${mergedPath} --overwrite`;
 
-    // Replace original with merged
+    // Replace original with merged and clean up
     await $`mv ${mergedPath} ${outputPath}`;
-    await $`rm ${addrPath}`;
+    await $`rm -f ${tagsPath} ${refsPath} ${addrPath}`;
     console.log(`  Filtered to ${outputPath}`);
 
     // Show size reduction
