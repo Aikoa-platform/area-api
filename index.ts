@@ -16,19 +16,19 @@
  *   GET /health
  */
 
+import type { Server } from "bun";
 import { constants, Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import {
-  findAreasNearby,
-  findAreasContaining,
-  searchAreasByName,
   findAdjacentAreas,
-  getStats,
+  findAreasContaining,
+  findAreasNearby,
   getCountries,
+  getStats,
   groupAreaResults,
+  searchAreasByName,
 } from "./db/queries";
 import { initializeDatabase } from "./db/schema";
-import type { Server } from "bun";
 
 const DB_PATH = process.env.DB_PATH || "./db/areas.db";
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -131,11 +131,13 @@ const server = Bun.serve({
       });
     }
 
-    // Validate API key for all other endpoints
-    if (!validateApiKey(req, server)) {
+    const requestIsValid = validateApiKey(req, server);
+    console.log("requestIsValid", requestIsValid);
+
+    if (!requestIsValid) {
       return jsonResponse({ error: "Unauthorized" }, 401);
     }
-
+    
     // Stats
     if (path === "/stats") {
       const stats = getStats(db);
@@ -176,7 +178,7 @@ const server = Bun.serve({
         lng,
         radius,
         rawLimit,
-        countryCode
+        countryCode,
       );
 
       if (group) {
@@ -271,7 +273,7 @@ const server = Bun.serve({
 
       if (!query && (lat === null || lng === null)) {
         return errorResponse(
-          "Either q (search query) or lat/lng coordinates are required"
+          "Either q (search query) or lat/lng coordinates are required",
         );
       }
 
@@ -320,7 +322,7 @@ const server = Bun.serve({
           "GET /health",
         ],
       },
-      404
+      404,
     );
   },
 });
@@ -329,16 +331,16 @@ console.log(`OSM Area Server running on http://localhost:${server.port}`);
 console.log("");
 console.log("Endpoints:");
 console.log(
-  "  GET /areas/nearby?lat=X&lng=Y&radius=Z   - Find areas within radius"
+  "  GET /areas/nearby?lat=X&lng=Y&radius=Z   - Find areas within radius",
 );
 console.log(
-  "  GET /areas/containing?lat=X&lng=Y        - Find areas containing point"
+  "  GET /areas/containing?lat=X&lng=Y        - Find areas containing point",
 );
 console.log(
-  "  GET /areas/search?q=name                 - Search areas by name"
+  "  GET /areas/search?q=name                 - Search areas by name",
 );
 console.log(
-  "  GET /areas/adjacent?q=name|lat=X&lng=Y   - Find adjacent areas with direction/level"
+  "  GET /areas/adjacent?q=name|lat=X&lng=Y   - Find adjacent areas with direction/level",
 );
 console.log("  GET /stats                               - Database statistics");
 console.log("  GET /health                              - Health check");
